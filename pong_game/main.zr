@@ -1,0 +1,187 @@
+// Pong Game - Playable Graphical Version with AI
+//
+// Controls:
+// - Player 1: W (up), S (down)
+// - Player 2: AI controlled
+// - ESC to quit
+
+import std::game;
+
+func main() {
+    println("==========================================");
+    println("      ZYRA PONG GAME - VS AI");
+    println("==========================================");
+    println("");
+    println("Controls:");
+    println("  Player 1: W (up), S (down)");
+    println("  Player 2: AI Controlled");
+    println("  Press ESC to quit");
+    println("");
+    
+    // Create game window
+    let win = Window(800, 600, "Zyra Pong - VS AI");
+    
+    // Game state
+    let mut paddle1_y = 250;
+    let mut paddle2_y = 250;
+    let mut ball_x = 392;
+    let mut ball_y = 292;
+    let mut ball_dx = 2;  // Slower ball speed
+    let mut ball_dy = 2;  // Slower ball speed
+    let mut score1 = 0;
+    let mut score2 = 0;
+    
+    // Constants
+    let paddle_w = 15;
+    let paddle_h = 100;
+    let ball_size = 15;
+    let paddle_speed = 5;
+    let ai_speed = 3;     // AI is slightly slower than player
+    
+    println("Game started!");
+    println("You are Player 1 (left paddle)");
+    println("AI controls Player 2 (right paddle)");
+    println("");
+    
+    // Game loop
+    while is_open() {
+        // Clear screen (black background)
+        clear();
+        
+        // Handle input - Player 1 (W/S)
+        if key_pressed("W") {
+            paddle1_y = paddle1_y - paddle_speed;
+            if paddle1_y < 0 {
+                paddle1_y = 0;
+            }
+        }
+        if key_pressed("S") {
+            paddle1_y = paddle1_y + paddle_speed;
+            if paddle1_y > 500 {
+                paddle1_y = 500;
+            }
+        }
+        
+        // AI for Player 2 - follows ball with some delay
+        let paddle2_center = paddle2_y + 50;
+        let ball_center = ball_y + 7;
+        
+        if paddle2_center < ball_center - 20 {
+            paddle2_y = paddle2_y + ai_speed;
+            if paddle2_y > 500 {
+                paddle2_y = 500;
+            }
+        }
+        if paddle2_center > ball_center + 20 {
+            paddle2_y = paddle2_y - ai_speed;
+            if paddle2_y < 0 {
+                paddle2_y = 0;
+            }
+        }
+        
+        // Update ball position
+        ball_x = ball_x + ball_dx;
+        ball_y = ball_y + ball_dy;
+        
+        // Ball bounce off top/bottom
+        if ball_y <= 0 {
+            ball_dy = 0 - ball_dy;
+            ball_y = 1;
+        }
+        if ball_y >= 583 {
+            ball_dy = 0 - ball_dy;
+            ball_y = 582;
+        }
+        
+        // Ball hits left paddle (player)
+        if ball_x <= 35 {
+            if ball_y + ball_size >= paddle1_y {
+                if ball_y <= paddle1_y + paddle_h {
+                    ball_dx = 0 - ball_dx;
+                    ball_x = 36;
+                    // Slight speed increase on hit
+                    if ball_dx > 0 {
+                        if ball_dx < 5 {
+                            ball_dx = ball_dx + 1;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Ball hits right paddle (AI)
+        if ball_x >= 748 {
+            if ball_y + ball_size >= paddle2_y {
+                if ball_y <= paddle2_y + paddle_h {
+                    ball_dx = 0 - ball_dx;
+                    ball_x = 747;
+                    // Slight speed increase on hit
+                    if ball_dx < 0 {
+                        if ball_dx > 0 - 5 {
+                            ball_dx = ball_dx - 1;
+                        }
+                    }
+                }
+            }
+        }
+        
+        // Scoring - Player 2 (AI) scores
+        if ball_x < 0 {
+            score2 = score2 + 1;
+            ball_x = 392;
+            ball_y = 292;
+            ball_dx = 2;  // Reset to slow speed
+            ball_dy = 2;
+            println("AI scores! Score: You ${score1} - AI ${score2}");
+        }
+        
+        // Scoring - Player 1 scores
+        if ball_x > 800 {
+            score1 = score1 + 1;
+            ball_x = 392;
+            ball_y = 292;
+            ball_dx = 0 - 2;  // Reset to slow speed
+            ball_dy = 2;
+            println("You score! Score: You ${score1} - AI ${score2}");
+        }
+        
+        // Draw paddles (white)
+        draw_rect(20, paddle1_y, paddle_w, paddle_h);
+        draw_rect(765, paddle2_y, paddle_w, paddle_h);
+        
+        // Draw ball (white)
+        draw_rect(ball_x, ball_y, ball_size, ball_size);
+        
+        // Draw center line
+        let mut line_y = 0;
+        while line_y < 600 {
+            draw_rect(397, line_y, 6, 20);
+            line_y = line_y + 40;
+        }
+        
+        // Display frame
+        display();
+        
+        // Small delay to control game speed
+        sleep(16);  // ~60 FPS
+    }
+    
+    println("");
+    println("==========================================");
+    println("           GAME OVER");
+    println("==========================================");
+    println("Final Score: You ${score1} - AI ${score2}");
+    
+    if score1 > score2 {
+        println("You Win! Congratulations!");
+    }
+    if score2 > score1 {
+        println("AI Wins! Better luck next time!");
+    }
+    if score1 == score2 {
+        println("It's a Tie!");
+    }
+    
+    println("");
+    println("Thanks for playing Zyra Pong!");
+}

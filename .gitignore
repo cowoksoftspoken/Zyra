@@ -1,0 +1,19 @@
+# Ignore build output
+target/
+
+# Ignore editor files
+.idea/
+.vscode/
+
+# Ignore documentation
+doc/
+
+
+# Ignore tests
+tests/
+
+# Ignore benchmarks
+benches/
+
+# Ignore dependencies
+cargo.lock

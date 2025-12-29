@@ -1,0 +1,117 @@
+// Physics Calculator - Zyra Demo Project
+//
+// Demonstrates:
+// - Namespace imports: import std::math
+// - Functions with type annotations
+// - String interpolation
+// - Mathematical operations
+
+import std::math;
+
+// ===== Physics Calculator Functions =====
+
+// Calculate kinetic energy: E = 0.5 * m * v^2
+func kinetic_energy(mass: f32, velocity: f32) -> f32 {
+    return 0.5 * mass * velocity * velocity;
+}
+
+// Calculate potential energy: E = m * g * h
+func potential_energy(mass: f32, height: f32, gravity: f32) -> f32 {
+    return mass * gravity * height;
+}
+
+// Calculate force: F = m * a
+func force(mass: f32, acceleration: f32) -> f32 {
+    return mass * acceleration;
+}
+
+// Calculate momentum: p = m * v
+func momentum(mass: f32, velocity: f32) -> f32 {
+    return mass * velocity;
+}
+
+// Calculate distance: d = v * t + 0.5 * a * t^2
+func distance(initial_velocity: f32, time: f32, acceleration: f32) -> f32 {
+    return initial_velocity * time + 0.5 * acceleration * time * time;
+}
+
+// Calculate final velocity: v = u + a * t
+func final_velocity(initial_velocity: f32, acceleration: f32, time: f32) -> f32 {
+    return initial_velocity + acceleration * time;
+}
+
+// Calculate work: W = F * d
+func work(force_applied: f32, distance_moved: f32) -> f32 {
+    return force_applied * distance_moved;
+}
+
+// Calculate power: P = W / t
+func power(work_done: f32, time: f32) -> f32 {
+    return work_done / time;
+}
+
+// Calculate centripetal force: F = m * v^2 / r
+func centripetal_force(mass: f32, velocity: f32, radius: f32) -> f32 {
+    return mass * velocity * velocity / radius;
+}
+
+// ===== Main Entry Point =====
+func main() {
+    println("==========================================");
+    println("     ZYRA PHYSICS CALCULATOR");
+    println("==========================================");
+    println("");
+    
+    // Constants
+    let gravity = 9.81;
+    
+    // Test values
+    let mass = 10.0;
+    let velocity = 20.0;
+    let height = 50.0;
+    let time = 5.0;
+    let radius = 2.0;
+    
+    println("[ Input Values ]");
+    println("  Mass: ${mass} kg");
+    println("  Velocity: ${velocity} m/s");
+    println("  Height: ${height} m");
+    println("  Time: ${time} s");
+    println("  Gravity: ${gravity} m/s2");
+    println("");
+    
+    // Calculate and display results
+    println("[ Calculations ]");
+    
+    let ke = kinetic_energy(mass, velocity);
+    println("  Kinetic Energy: ${ke} J");
+    
+    let pe = potential_energy(mass, height, gravity);
+    println("  Potential Energy: ${pe} J");
+    
+    let f = force(mass, gravity);
+    println("  Weight Force: ${f} N");
+    
+    let p = momentum(mass, velocity);
+    println("  Momentum: ${p} kg*m/s");
+    
+    let d = distance(0.0, time, gravity);
+    println("  Free Fall Distance (${time}s): ${d} m");
+    
+    let v = final_velocity(0.0, gravity, time);
+    println("  Final Velocity (${time}s): ${v} m/s");
+    
+    let w = work(f, height);
+    println("  Work Done: ${w} J");
+    
+    let pwr = power(w, time);
+    println("  Power: ${pwr} W");
+    
+    let fc = centripetal_force(mass, velocity, radius);
+    println("  Centripetal Force (r=${radius}m): ${fc} N");
+    
+    println("");
+    println("==========================================");
+    println("  Physics Calculator Complete!");
+    println("==========================================");
+}

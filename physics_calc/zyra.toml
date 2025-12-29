@@ -1,0 +1,10 @@
+[project]
+name = "physics_calc"
+version = "0.1.0"
+edition = "2025"
+
+[dependencies]
+# Add dependencies here
+
+[build]
+entry = "main.zr"

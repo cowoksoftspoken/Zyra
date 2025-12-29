@@ -1,0 +1,24 @@
+[package]
+name = "zyra"
+version = "0.1.0"
+edition = "2021"
+authors = ["Zyra Language Team"]
+description = "A modern, safe, and deterministic programming language for 2D game development"
+license = "MIT"
+
+[[bin]]
+name = "zyra"
+path = "src/main.rs"
+
+[lib]
+name = "zyra"
+path = "src/lib.rs"
+
+[dependencies]
+minifb = "0.25"
+lazy_static = "1.4"
+colored = "2.0"
+
+[profile.release]
+opt-level = 3
+lto = true
