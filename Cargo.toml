@@ -2,7 +2,7 @@
 name = "zyra"
 version = "0.1.0"
 edition = "2021"
-authors = ["Zyra Language Team"]
+authors = ["Inggrit Setya Budi"]
 description = "A modern, safe, and deterministic programming language for 2D game development"
 license = "MIT"
 
