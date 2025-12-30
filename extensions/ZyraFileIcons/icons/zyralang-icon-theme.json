@@ -1,0 +1,16 @@
+{
+  "fileExtensions": {
+    "zr": "zr",
+    "zy": "zr",
+    "za": "zr",
+    "zyc": "zyc"
+  },
+  "iconDefinitions": {
+    "zr": {
+      "iconPath": "./zyra_source/favicon-16x16.png"
+    },
+    "zyc": {
+      "iconPath": "./zyc/favicon-16x16.png"
+    }
+  }
+}

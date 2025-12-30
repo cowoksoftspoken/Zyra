@@ -181,7 +181,7 @@ Requirements:
 - Cargo
 
 ```bash
--git clone <repo>
+git clone https://github.com/cowoksoftspoken/Zyra.git
 cd Zyra
 cargo build --release
 ```
@@ -191,4 +191,4 @@ some features not work right now.
 
 ## License
 
-MIT
+See [LICENSE](LICENSE) file.

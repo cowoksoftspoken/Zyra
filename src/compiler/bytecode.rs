@@ -296,27 +296,571 @@ impl Bytecode {
         }
     }
 
-    /// Serialize bytecode to bytes
+    /// Serialize bytecode to bytes for .zyc file format
     pub fn serialize(&self) -> Vec<u8> {
-        // Simple serialization for build command
-        // In production, use a proper binary format
         let mut output = Vec::new();
 
         // Magic number "ZYRA"
         output.extend_from_slice(b"ZYRA");
 
-        // Version
+        // Version (2 bytes)
         output.push(0);
         output.push(1);
 
-        // Instruction count
+        // Instruction count (4 bytes, little-endian)
         let count = self.instructions.len() as u32;
         output.extend_from_slice(&count.to_le_bytes());
 
-        // For now, just store the instruction count
-        // Full serialization would encode each instruction
+        // Function count (4 bytes, little-endian)
+        let func_count = self.functions.len() as u32;
+        output.extend_from_slice(&func_count.to_le_bytes());
+
+        // Serialize each function definition
+        for (name, func_def) in &self.functions {
+            Self::serialize_string(&mut output, name);
+            output.extend_from_slice(&(func_def.params.len() as u32).to_le_bytes());
+            for param in &func_def.params {
+                Self::serialize_string(&mut output, param);
+            }
+            output.extend_from_slice(&(func_def.start_address as u32).to_le_bytes());
+            output.extend_from_slice(&(func_def.end_address as u32).to_le_bytes());
+        }
+
+        // Serialize each instruction
+        for instr in &self.instructions {
+            Self::serialize_instruction(&mut output, instr);
+        }
 
         output
+    }
+
+    fn serialize_instruction(output: &mut Vec<u8>, instr: &Instruction) {
+        match instr {
+            Instruction::LoadConst(value) => {
+                output.push(0x01);
+                Self::serialize_value(output, value);
+            }
+            Instruction::LoadVar(name) => {
+                output.push(0x02);
+                Self::serialize_string(output, name);
+            }
+            Instruction::StoreVar(name) => {
+                output.push(0x03);
+                Self::serialize_string(output, name);
+            }
+            Instruction::Pop => output.push(0x04),
+            Instruction::Add => output.push(0x10),
+            Instruction::Sub => output.push(0x11),
+            Instruction::Mul => output.push(0x12),
+            Instruction::Div => output.push(0x13),
+            Instruction::Mod => output.push(0x14),
+            Instruction::Neg => output.push(0x15),
+            Instruction::Eq => output.push(0x20),
+            Instruction::Neq => output.push(0x21),
+            Instruction::Lt => output.push(0x22),
+            Instruction::Lte => output.push(0x23),
+            Instruction::Gt => output.push(0x24),
+            Instruction::Gte => output.push(0x25),
+            Instruction::And => output.push(0x30),
+            Instruction::Or => output.push(0x31),
+            Instruction::Not => output.push(0x32),
+            Instruction::Jump(addr) => {
+                output.push(0x40);
+                output.extend_from_slice(&(*addr as u32).to_le_bytes());
+            }
+            Instruction::JumpIfFalse(addr) => {
+                output.push(0x41);
+                output.extend_from_slice(&(*addr as u32).to_le_bytes());
+            }
+            Instruction::Call(name, argc) => {
+                output.push(0x50);
+                Self::serialize_string(output, name);
+                output.extend_from_slice(&(*argc as u32).to_le_bytes());
+            }
+            Instruction::Return => output.push(0x51),
+            Instruction::Alloc => output.push(0x60),
+            Instruction::Move(from, to) => {
+                output.push(0x61);
+                Self::serialize_string(output, from);
+                Self::serialize_string(output, to);
+            }
+            Instruction::BorrowShared(name) => {
+                output.push(0x62);
+                Self::serialize_string(output, name);
+            }
+            Instruction::BorrowMut(name) => {
+                output.push(0x63);
+                Self::serialize_string(output, name);
+            }
+            Instruction::Drop(name) => {
+                output.push(0x64);
+                Self::serialize_string(output, name);
+            }
+            Instruction::EndBorrow(name) => {
+                output.push(0x65);
+                Self::serialize_string(output, name);
+            }
+            Instruction::MakeList(count) => {
+                output.push(0x70);
+                output.extend_from_slice(&(*count as u32).to_le_bytes());
+            }
+            Instruction::MakeObject(count) => {
+                output.push(0x71);
+                output.extend_from_slice(&(*count as u32).to_le_bytes());
+            }
+            Instruction::GetField(name) => {
+                output.push(0x72);
+                Self::serialize_string(output, name);
+            }
+            Instruction::SetField(name) => {
+                output.push(0x73);
+                Self::serialize_string(output, name);
+            }
+            Instruction::GetIndex => output.push(0x74),
+            Instruction::SetIndex => output.push(0x75),
+            Instruction::EnterScope => output.push(0x80),
+            Instruction::ExitScope => output.push(0x81),
+            Instruction::Print => output.push(0x90),
+            Instruction::Nop => output.push(0xFE),
+            Instruction::Halt => output.push(0xFF),
+        }
+    }
+
+    fn serialize_value(output: &mut Vec<u8>, value: &Value) {
+        match value {
+            Value::None => output.push(0x00),
+            Value::Bool(b) => {
+                output.push(0x01);
+                output.push(if *b { 1 } else { 0 });
+            }
+            Value::Int(n) | Value::I64(n) => {
+                output.push(0x02);
+                output.extend_from_slice(&n.to_le_bytes());
+            }
+            Value::I32(n) => {
+                output.push(0x03);
+                output.extend_from_slice(&n.to_le_bytes());
+            }
+            Value::Float(f) | Value::F64(f) => {
+                output.push(0x04);
+                output.extend_from_slice(&f.to_le_bytes());
+            }
+            Value::F32(f) => {
+                output.push(0x05);
+                output.extend_from_slice(&f.to_le_bytes());
+            }
+            Value::String(s) => {
+                output.push(0x06);
+                Self::serialize_string(output, s);
+            }
+            Value::Char(c) => {
+                output.push(0x07);
+                output.extend_from_slice(&(*c as u32).to_le_bytes());
+            }
+            Value::Vec(items) | Value::List(items) | Value::Array(items) => {
+                output.push(0x08);
+                output.extend_from_slice(&(items.len() as u32).to_le_bytes());
+                for item in items {
+                    Self::serialize_value(output, item);
+                }
+            }
+            Value::Function {
+                name,
+                params,
+                address,
+            } => {
+                output.push(0x10);
+                Self::serialize_string(output, name);
+                output.extend_from_slice(&(params.len() as u32).to_le_bytes());
+                for param in params {
+                    Self::serialize_string(output, param);
+                }
+                output.extend_from_slice(&(*address as u32).to_le_bytes());
+            }
+            // Complex types - serialize as None for now
+            _ => output.push(0x00),
+        }
+    }
+
+    fn serialize_string(output: &mut Vec<u8>, s: &str) {
+        let bytes = s.as_bytes();
+        output.extend_from_slice(&(bytes.len() as u32).to_le_bytes());
+        output.extend_from_slice(bytes);
+    }
+
+    /// Deserialize bytecode from bytes
+    pub fn deserialize(data: &[u8]) -> Result<Self, String> {
+        if data.len() < 14 {
+            return Err("Invalid bytecode: too short".to_string());
+        }
+
+        // Check magic
+        if &data[0..4] != b"ZYRA" {
+            return Err("Invalid bytecode: bad magic number".to_string());
+        }
+
+        // Check version
+        let version = (data[4] as u16) << 8 | data[5] as u16;
+        if version != 1 {
+            return Err(format!("Unsupported bytecode version: {}", version));
+        }
+
+        // Read instruction count
+        let instr_count = u32::from_le_bytes([data[6], data[7], data[8], data[9]]) as usize;
+
+        // Read function count
+        let func_count = u32::from_le_bytes([data[10], data[11], data[12], data[13]]) as usize;
+
+        let mut bytecode = Bytecode::new();
+        let mut pos = 14;
+
+        // Read function definitions
+        for _ in 0..func_count {
+            let (name, new_pos) = Self::deserialize_string(data, pos)?;
+            pos = new_pos;
+
+            if pos + 4 > data.len() {
+                return Err("Unexpected end".to_string());
+            }
+            let param_count =
+                u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                    as usize;
+            pos += 4;
+
+            let mut params = Vec::with_capacity(param_count);
+            for _ in 0..param_count {
+                let (param, new_pos) = Self::deserialize_string(data, pos)?;
+                params.push(param);
+                pos = new_pos;
+            }
+
+            if pos + 8 > data.len() {
+                return Err("Unexpected end".to_string());
+            }
+            let start_address =
+                u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                    as usize;
+            pos += 4;
+            let end_address =
+                u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                    as usize;
+            pos += 4;
+
+            bytecode.functions.insert(
+                name.clone(),
+                FunctionDef {
+                    name,
+                    params,
+                    start_address,
+                    end_address,
+                },
+            );
+        }
+
+        // Read instructions
+        for _ in 0..instr_count {
+            if pos >= data.len() {
+                return Err("Unexpected end of bytecode".to_string());
+            }
+            let (instr, new_pos) = Self::deserialize_instruction(data, pos)?;
+            bytecode.emit(instr);
+            pos = new_pos;
+        }
+
+        Ok(bytecode)
+    }
+
+    fn deserialize_instruction(data: &[u8], pos: usize) -> Result<(Instruction, usize), String> {
+        if pos >= data.len() {
+            return Err("Unexpected end of bytecode".to_string());
+        }
+
+        let opcode = data[pos];
+        let mut pos = pos + 1;
+
+        let instr = match opcode {
+            0x01 => {
+                let (value, new_pos) = Self::deserialize_value(data, pos)?;
+                pos = new_pos;
+                Instruction::LoadConst(value)
+            }
+            0x02 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::LoadVar(name)
+            }
+            0x03 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::StoreVar(name)
+            }
+            0x04 => Instruction::Pop,
+            0x10 => Instruction::Add,
+            0x11 => Instruction::Sub,
+            0x12 => Instruction::Mul,
+            0x13 => Instruction::Div,
+            0x14 => Instruction::Mod,
+            0x15 => Instruction::Neg,
+            0x20 => Instruction::Eq,
+            0x21 => Instruction::Neq,
+            0x22 => Instruction::Lt,
+            0x23 => Instruction::Lte,
+            0x24 => Instruction::Gt,
+            0x25 => Instruction::Gte,
+            0x30 => Instruction::And,
+            0x31 => Instruction::Or,
+            0x32 => Instruction::Not,
+            0x40 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let addr =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Instruction::Jump(addr)
+            }
+            0x41 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let addr =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Instruction::JumpIfFalse(addr)
+            }
+            0x50 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let argc =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Instruction::Call(name, argc)
+            }
+            0x51 => Instruction::Return,
+            0x60 => Instruction::Alloc,
+            0x61 => {
+                let (from, new_pos) = Self::deserialize_string(data, pos)?;
+                let (to, new_pos) = Self::deserialize_string(data, new_pos)?;
+                pos = new_pos;
+                Instruction::Move(from, to)
+            }
+            0x62 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::BorrowShared(name)
+            }
+            0x63 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::BorrowMut(name)
+            }
+            0x64 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::Drop(name)
+            }
+            0x65 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::EndBorrow(name)
+            }
+            0x70 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let count =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Instruction::MakeList(count)
+            }
+            0x71 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let count =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Instruction::MakeObject(count)
+            }
+            0x72 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::GetField(name)
+            }
+            0x73 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::SetField(name)
+            }
+            0x74 => Instruction::GetIndex,
+            0x75 => Instruction::SetIndex,
+            0x80 => Instruction::EnterScope,
+            0x81 => Instruction::ExitScope,
+            0x90 => Instruction::Print,
+            0xFE => Instruction::Nop,
+            0xFF => Instruction::Halt,
+            _ => return Err(format!("Unknown opcode: 0x{:02X}", opcode)),
+        };
+
+        Ok((instr, pos))
+    }
+
+    fn deserialize_value(data: &[u8], pos: usize) -> Result<(Value, usize), String> {
+        if pos >= data.len() {
+            return Err("Unexpected end of bytecode".to_string());
+        }
+
+        let tag = data[pos];
+        let mut pos = pos + 1;
+
+        let value = match tag {
+            0x00 => Value::None,
+            0x01 => {
+                if pos >= data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let b = data[pos] != 0;
+                pos += 1;
+                Value::Bool(b)
+            }
+            0x02 => {
+                if pos + 8 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let n = i64::from_le_bytes([
+                    data[pos],
+                    data[pos + 1],
+                    data[pos + 2],
+                    data[pos + 3],
+                    data[pos + 4],
+                    data[pos + 5],
+                    data[pos + 6],
+                    data[pos + 7],
+                ]);
+                pos += 8;
+                Value::Int(n)
+            }
+            0x03 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let n =
+                    i32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+                pos += 4;
+                Value::I32(n)
+            }
+            0x04 => {
+                if pos + 8 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let f = f64::from_le_bytes([
+                    data[pos],
+                    data[pos + 1],
+                    data[pos + 2],
+                    data[pos + 3],
+                    data[pos + 4],
+                    data[pos + 5],
+                    data[pos + 6],
+                    data[pos + 7],
+                ]);
+                pos += 8;
+                Value::Float(f)
+            }
+            0x05 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let f =
+                    f32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+                pos += 4;
+                Value::F32(f)
+            }
+            0x06 => {
+                let (s, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Value::String(s)
+            }
+            0x07 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let code =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]);
+                pos += 4;
+                Value::Char(char::from_u32(code).unwrap_or('\0'))
+            }
+            0x08 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let count =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                let mut items = Vec::with_capacity(count);
+                for _ in 0..count {
+                    let (item, new_pos) = Self::deserialize_value(data, pos)?;
+                    items.push(item);
+                    pos = new_pos;
+                }
+                Value::Vec(items)
+            }
+            0x10 => {
+                let (name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let param_count =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                let mut params = Vec::with_capacity(param_count);
+                for _ in 0..param_count {
+                    let (param, new_pos) = Self::deserialize_string(data, pos)?;
+                    params.push(param);
+                    pos = new_pos;
+                }
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let address =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Value::Function {
+                    name,
+                    params,
+                    address,
+                }
+            }
+            _ => return Err(format!("Unknown value tag: 0x{:02X}", tag)),
+        };
+
+        Ok((value, pos))
+    }
+
+    fn deserialize_string(data: &[u8], pos: usize) -> Result<(String, usize), String> {
+        if pos + 4 > data.len() {
+            return Err("Unexpected end of bytecode".to_string());
+        }
+        let len =
+            u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]]) as usize;
+        let pos = pos + 4;
+        if pos + len > data.len() {
+            return Err("Unexpected end of bytecode".to_string());
+        }
+        let s = String::from_utf8(data[pos..pos + len].to_vec())
+            .map_err(|_| "Invalid UTF-8 in string".to_string())?;
+        Ok((s, pos + len))
     }
 }
 

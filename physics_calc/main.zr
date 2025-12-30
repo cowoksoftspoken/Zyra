@@ -1,12 +1,10 @@
 // Physics Calculator - Zyra Demo Project
 //
 // Demonstrates:
-// - Namespace imports: import std::math
 // - Functions with type annotations
 // - String interpolation
 // - Mathematical operations
 
-import std::math;
 
 // ===== Physics Calculator Functions =====
 

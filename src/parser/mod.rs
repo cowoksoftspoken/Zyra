@@ -1001,7 +1001,26 @@ impl Parser {
                 }
             }
 
-            TokenKind::Identifier(name) => Ok(Expression::Identifier { name, span }),
+            TokenKind::Identifier(name) => {
+                // Check for qualified path (module::function)
+                let mut full_path = name;
+                while self.check(&TokenKind::ColonColon) {
+                    self.advance(); // Consume ::
+                    if let TokenKind::Identifier(segment) = &self.peek().kind {
+                        full_path = format!("{}::{}", full_path, segment);
+                        self.advance(); // Consume segment
+                    } else {
+                        return Err(ZyraError::syntax_error(
+                            "Expected identifier after '::'",
+                            SourceLocation::new("", self.peek().span.line, self.peek().span.column),
+                        ));
+                    }
+                }
+                Ok(Expression::Identifier {
+                    name: full_path,
+                    span,
+                })
+            }
 
             TokenKind::LeftParen => {
                 let inner = self.parse_expression()?;

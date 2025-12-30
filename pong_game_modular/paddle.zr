@@ -1,0 +1,54 @@
+// paddle.zr - Paddle control and AI module
+// All functions are accessed as paddle::function_name()
+
+import std::game;
+
+// Move paddle up (with boundary check)
+func move_up(paddle_y: Int, speed: Int) -> Int {
+    let new_y = paddle_y - speed;
+    if new_y < 0 {
+        0
+    } else {
+        new_y
+    }
+}
+
+// Move paddle down (with boundary check)  
+func move_down(paddle_y: Int, speed: Int) -> Int {
+    let new_y = paddle_y + speed;
+    if new_y > 500 {
+        500
+    } else {
+        new_y
+    }
+}
+
+// Handle player 1 input (W/S keys)
+func update_player1(paddle_y: Int, speed: Int) -> Int {
+    if key_pressed("W") {
+        // Use explicit namespace since function will be prefixed
+        paddle::move_up(paddle_y, speed)
+    } else {
+        if key_pressed("S") {
+            paddle::move_down(paddle_y, speed)
+        } else {
+            paddle_y  // No movement
+        }
+    }
+}
+
+// AI for player 2 - follows ball with some delay
+func update_ai(paddle_y: Int, ball_y: Int, ai_speed: Int) -> Int {
+    let paddle_center = paddle_y + 50;
+    let ball_center = ball_y + 7;
+    
+    if paddle_center < ball_center - 20 {
+        paddle::move_down(paddle_y, ai_speed)
+    } else {
+        if paddle_center > ball_center + 20 {
+            paddle::move_up(paddle_y, ai_speed)
+        } else {
+            paddle_y  // Stay in place
+        }
+    }
+}

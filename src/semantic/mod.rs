@@ -51,6 +51,10 @@ pub struct SemanticAnalyzer {
     /// Function scope for return checks
     #[allow(dead_code)]
     function_scope: Option<ScopeId>,
+    /// Imported standard library modules (e.g., "std::math", "std::fs")
+    imported_std_modules: std::collections::HashSet<String>,
+    /// Specific items imported from std modules (e.g., "sqrt" from "std::math")
+    imported_std_items: HashMap<String, String>, // item_name -> module_name
 }
 
 /// Function signature for type checking
@@ -76,6 +80,8 @@ impl SemanticAnalyzer {
             scope_stack: ScopeStack::new(),
             references: HashMap::new(),
             function_scope: None,
+            imported_std_modules: std::collections::HashSet::new(),
+            imported_std_items: HashMap::new(),
         };
 
         // Register built-in functions
@@ -137,6 +143,428 @@ impl SemanticAnalyzer {
                 lifetimes: vec![],
             },
         );
+    }
+
+    /// Register functions from a specific std module
+    fn register_std_module_functions(&mut self, module_name: &str) {
+        let functions: Vec<(&str, Vec<(&str, ZyraType)>, ZyraType)> = match module_name {
+            "std::math" => vec![
+                ("abs", vec![("x", ZyraType::F64)], ZyraType::F64),
+                ("sqrt", vec![("x", ZyraType::F64)], ZyraType::F64),
+                (
+                    "pow",
+                    vec![("base", ZyraType::F64), ("exp", ZyraType::F64)],
+                    ZyraType::F64,
+                ),
+                ("sin", vec![("x", ZyraType::F64)], ZyraType::F64),
+                ("cos", vec![("x", ZyraType::F64)], ZyraType::F64),
+                ("tan", vec![("x", ZyraType::F64)], ZyraType::F64),
+                (
+                    "min",
+                    vec![("a", ZyraType::F64), ("b", ZyraType::F64)],
+                    ZyraType::F64,
+                ),
+                (
+                    "max",
+                    vec![("a", ZyraType::F64), ("b", ZyraType::F64)],
+                    ZyraType::F64,
+                ),
+                ("floor", vec![("x", ZyraType::F64)], ZyraType::I64),
+                ("ceil", vec![("x", ZyraType::F64)], ZyraType::I64),
+                ("round", vec![("x", ZyraType::F64)], ZyraType::I64),
+                (
+                    "random",
+                    vec![("min", ZyraType::I64), ("max", ZyraType::I64)],
+                    ZyraType::I64,
+                ),
+                (
+                    "lerp",
+                    vec![
+                        ("a", ZyraType::F64),
+                        ("b", ZyraType::F64),
+                        ("t", ZyraType::F64),
+                    ],
+                    ZyraType::F64,
+                ),
+                (
+                    "clamp",
+                    vec![
+                        ("x", ZyraType::F64),
+                        ("min", ZyraType::F64),
+                        ("max", ZyraType::F64),
+                    ],
+                    ZyraType::F64,
+                ),
+                ("pi", vec![], ZyraType::F64),
+                ("e", vec![], ZyraType::F64),
+            ],
+            "std::io" => vec![
+                ("print", vec![("value", ZyraType::Unknown)], ZyraType::Void),
+                (
+                    "println",
+                    vec![("value", ZyraType::Unknown)],
+                    ZyraType::Void,
+                ),
+                ("input", vec![], ZyraType::String),
+            ],
+            "std::time" => vec![
+                ("now", vec![], ZyraType::I64),
+                ("now_secs", vec![], ZyraType::F64),
+                ("sleep", vec![("ms", ZyraType::I64)], ZyraType::Void),
+                ("monotonic_ms", vec![], ZyraType::I64),
+                ("instant_now", vec![], ZyraType::I64),
+                (
+                    "instant_elapsed",
+                    vec![("id", ZyraType::I64)],
+                    ZyraType::I64,
+                ),
+                ("delta_time", vec![], ZyraType::F64),
+                ("fps", vec![], ZyraType::F64),
+            ],
+            "std::string" => vec![
+                ("string_len", vec![("s", ZyraType::String)], ZyraType::I64),
+                ("to_upper", vec![("s", ZyraType::String)], ZyraType::String),
+                ("to_lower", vec![("s", ZyraType::String)], ZyraType::String),
+                ("trim", vec![("s", ZyraType::String)], ZyraType::String),
+                (
+                    "contains",
+                    vec![("s", ZyraType::String), ("sub", ZyraType::String)],
+                    ZyraType::Bool,
+                ),
+                (
+                    "replace",
+                    vec![
+                        ("s", ZyraType::String),
+                        ("from", ZyraType::String),
+                        ("to", ZyraType::String),
+                    ],
+                    ZyraType::String,
+                ),
+                (
+                    "split",
+                    vec![("s", ZyraType::String), ("delim", ZyraType::String)],
+                    ZyraType::Vec(Box::new(ZyraType::String)),
+                ),
+                ("parse_int", vec![("s", ZyraType::String)], ZyraType::I64),
+                ("parse_float", vec![("s", ZyraType::String)], ZyraType::F64),
+            ],
+            "std::fs" => vec![
+                (
+                    "read_file",
+                    vec![("path", ZyraType::String)],
+                    ZyraType::String,
+                ),
+                (
+                    "write_file",
+                    vec![("path", ZyraType::String), ("content", ZyraType::String)],
+                    ZyraType::Bool,
+                ),
+                (
+                    "file_exists",
+                    vec![("path", ZyraType::String)],
+                    ZyraType::Bool,
+                ),
+                ("is_file", vec![("path", ZyraType::String)], ZyraType::Bool),
+                ("is_dir", vec![("path", ZyraType::String)], ZyraType::Bool),
+                (
+                    "list_dir",
+                    vec![("path", ZyraType::String)],
+                    ZyraType::Vec(Box::new(ZyraType::String)),
+                ),
+                ("current_dir", vec![], ZyraType::String),
+            ],
+            "std::env" => vec![
+                ("args", vec![], ZyraType::Vec(Box::new(ZyraType::String))),
+                ("args_count", vec![], ZyraType::I64),
+                (
+                    "env_var",
+                    vec![("name", ZyraType::String)],
+                    ZyraType::String,
+                ),
+                ("os_name", vec![], ZyraType::String),
+                ("os_arch", vec![], ZyraType::String),
+                ("is_windows", vec![], ZyraType::Bool),
+                ("is_linux", vec![], ZyraType::Bool),
+                ("temp_dir", vec![], ZyraType::String),
+                ("pid", vec![], ZyraType::I64),
+            ],
+            "std::process" => vec![("exit", vec![("code", ZyraType::I64)], ZyraType::Void)],
+            "std::thread" => vec![
+                ("thread_sleep", vec![("ms", ZyraType::I64)], ZyraType::Void),
+                ("thread_yield", vec![], ZyraType::Void),
+                ("thread_id", vec![], ZyraType::I64),
+                ("cpu_cores", vec![], ZyraType::I64),
+            ],
+            "std::mem" => vec![
+                ("size_of", vec![("value", ZyraType::Unknown)], ZyraType::I64),
+                (
+                    "type_of",
+                    vec![("value", ZyraType::Unknown)],
+                    ZyraType::String,
+                ),
+            ],
+            "std::core" => vec![
+                (
+                    "assert",
+                    vec![("condition", ZyraType::Bool), ("message", ZyraType::String)],
+                    ZyraType::Void,
+                ),
+                ("panic", vec![("message", ZyraType::String)], ZyraType::Void),
+                (
+                    "is_none",
+                    vec![("value", ZyraType::Unknown)],
+                    ZyraType::Bool,
+                ),
+                (
+                    "is_some",
+                    vec![("value", ZyraType::Unknown)],
+                    ZyraType::Bool,
+                ),
+                (
+                    "unwrap",
+                    vec![("value", ZyraType::Unknown)],
+                    ZyraType::Unknown,
+                ),
+            ],
+            "std::game" => vec![
+                (
+                    "Window",
+                    vec![
+                        ("width", ZyraType::I64),
+                        ("height", ZyraType::I64),
+                        ("title", ZyraType::String),
+                    ],
+                    ZyraType::Object(HashMap::new()),
+                ),
+                ("is_open", vec![], ZyraType::Bool),
+                ("clear", vec![], ZyraType::Void),
+                ("display", vec![], ZyraType::Void),
+                (
+                    "key_pressed",
+                    vec![("key", ZyraType::String)],
+                    ZyraType::Bool,
+                ),
+                (
+                    "draw_rect",
+                    vec![
+                        ("x", ZyraType::I64),
+                        ("y", ZyraType::I64),
+                        ("w", ZyraType::I64),
+                        ("h", ZyraType::I64),
+                    ],
+                    ZyraType::Void,
+                ),
+            ],
+            _ => vec![],
+        };
+
+        for (name, params, return_type) in functions {
+            let param_types: Vec<_> = params
+                .into_iter()
+                .map(|(n, t)| (n.to_string(), t))
+                .collect();
+
+            self.functions.insert(
+                name.to_string(),
+                FunctionSignature {
+                    name: name.to_string(),
+                    params: param_types,
+                    return_type,
+                    lifetimes: vec![],
+                },
+            );
+
+            // Track that this function came from this module
+            self.imported_std_items
+                .insert(name.to_string(), module_name.to_string());
+        }
+    }
+
+    /// Check if a stdlib function is available (imported)
+    pub fn is_stdlib_function_available(&self, name: &str) -> bool {
+        // Always allow `print`, `println` as builtins
+        if matches!(name, "print" | "println" | "input") {
+            return true;
+        }
+
+        // Check if specifically imported
+        self.imported_std_items.contains_key(name)
+    }
+
+    /// Check if a function name is a stdlib function
+    pub fn is_stdlib_function(&self, name: &str) -> bool {
+        // Builtins always available
+        if matches!(name, "print" | "println" | "input") {
+            return false; // Not a restricted stdlib function
+        }
+
+        // List of known stdlib function names
+        const STDLIB_FUNCTIONS: &[&str] = &[
+            // std::core
+            "assert",
+            "panic",
+            "type_of",
+            "is_none",
+            "is_some",
+            "unwrap",
+            "expect",
+            // std::math
+            "abs",
+            "sqrt",
+            "pow",
+            "sin",
+            "cos",
+            "tan",
+            "asin",
+            "acos",
+            "atan",
+            "atan2",
+            "floor",
+            "ceil",
+            "round",
+            "min",
+            "max",
+            "clamp",
+            "lerp",
+            "random",
+            "random_range",
+            "pi",
+            "e",
+            "log",
+            "log10",
+            "exp",
+            // std::string
+            "string_len",
+            "to_upper",
+            "to_lower",
+            "trim",
+            "trim_start",
+            "trim_end",
+            "contains",
+            "starts_with",
+            "ends_with",
+            "replace",
+            "split",
+            "join",
+            "parse_int",
+            "parse_float",
+            "char_at",
+            "substring",
+            // std::io
+            "read_line",
+            "write",
+            "writeln",
+            "flush",
+            // std::time
+            "now",
+            "now_secs",
+            "now_millis",
+            "sleep",
+            "monotonic_ms",
+            "instant_now",
+            "instant_elapsed",
+            "delta_time",
+            "fps",
+            // std::fs
+            "read_file",
+            "write_file",
+            "append_file",
+            "file_exists",
+            "delete_file",
+            "create_dir",
+            "list_dir",
+            "is_file",
+            "is_dir",
+            "current_dir",
+            // std::env
+            "env_var",
+            "set_env_var",
+            "args",
+            "args_count",
+            "os_name",
+            "os_arch",
+            "is_windows",
+            "is_linux",
+            "is_macos",
+            "home_dir",
+            "temp_dir",
+            "pid",
+            // std::process
+            "exit",
+            "exec",
+            "shell",
+            "spawn",
+            // std::thread
+            "thread_spawn",
+            "thread_join",
+            "thread_sleep",
+            "thread_yield",
+            "thread_id",
+            "thread_name",
+            "cpu_cores",
+            "thread_park",
+            // std::mem
+            "size_of",
+            "drop",
+            "take",
+            "swap",
+            "replace",
+            // std::game
+            "Window",
+            "is_open",
+            "clear",
+            "display",
+            "key_pressed",
+            "draw_rect",
+            "draw_circle",
+            "draw_line",
+            "draw_text",
+            "set_color",
+        ];
+
+        STDLIB_FUNCTIONS.contains(&name)
+    }
+
+    /// Get the module that provides a stdlib function
+    pub fn get_stdlib_module_for_function(&self, name: &str) -> Option<&'static str> {
+        match name {
+            // std::core
+            "assert" | "panic" | "type_of" | "is_none" | "is_some" | "unwrap" | "expect" => {
+                Some("std::core")
+            }
+            // std::math
+            "abs" | "sqrt" | "pow" | "sin" | "cos" | "tan" | "asin" | "acos" | "atan" | "atan2"
+            | "floor" | "ceil" | "round" | "min" | "max" | "clamp" | "lerp" | "random"
+            | "random_range" | "pi" | "e" | "log" | "log10" | "exp" => Some("std::math"),
+            // std::string
+            "string_len" | "to_upper" | "to_lower" | "trim" | "trim_start" | "trim_end"
+            | "contains" | "starts_with" | "ends_with" | "replace" | "split" | "join"
+            | "parse_int" | "parse_float" | "char_at" | "substring" => Some("std::string"),
+            // std::io
+            "read_line" | "write" | "writeln" | "flush" => Some("std::io"),
+            // std::time
+            "now" | "now_secs" | "now_millis" | "sleep" | "monotonic_ms" | "instant_now"
+            | "instant_elapsed" | "delta_time" | "fps" => Some("std::time"),
+            // std::fs
+            "read_file" | "write_file" | "append_file" | "file_exists" | "delete_file"
+            | "create_dir" | "list_dir" | "is_file" | "is_dir" | "current_dir" => Some("std::fs"),
+            // std::env
+            "env_var" | "set_env_var" | "args" | "args_count" | "os_name" | "os_arch"
+            | "is_windows" | "is_linux" | "is_macos" | "home_dir" | "temp_dir" | "pid" => {
+                Some("std::env")
+            }
+            // std::process
+            "exit" | "exec" | "shell" | "spawn" => Some("std::process"),
+            // std::thread
+            "thread_spawn" | "thread_join" | "thread_sleep" | "thread_yield" | "thread_id"
+            | "thread_name" | "cpu_cores" | "thread_park" => Some("std::thread"),
+            // std::mem
+            "size_of" | "drop" | "take" | "swap" => Some("std::mem"),
+            // std::game
+            "Window" | "is_open" | "clear" | "display" | "key_pressed" | "draw_rect"
+            | "draw_circle" | "draw_line" | "draw_text" | "set_color" => Some("std::game"),
+            _ => None,
+        }
     }
 
     /// Analyze a program
@@ -397,23 +825,45 @@ impl SemanticAnalyzer {
 
             Statement::Import {
                 path,
-                items: _,
+                items,
                 span: _,
             } => {
                 // Import statements bring module functions into scope
-                // For now, validate the root namespace
                 let root = path.first().map(|s| s.as_str()).unwrap_or("");
+
                 match root {
                     "std" => {
-                        // Standard library modules: std::game, std::math, etc.
+                        // Standard library modules: std::math, std::fs, etc.
+                        let module_name = path.join("::");
+                        self.imported_std_modules.insert(module_name.clone());
+
+                        // If specific items are imported, register them
+                        if !items.is_empty() {
+                            for item in items {
+                                self.imported_std_items
+                                    .insert(item.clone(), module_name.clone());
+                            }
+                        } else {
+                            // Import all functions from this module
+                            self.register_std_module_functions(&module_name);
+                        }
                         Ok(ZyraType::Void)
                     }
-                    "game" | "math" | "io" | "time" => {
-                        // Legacy single-word modules still supported
+                    "game" | "math" | "io" | "time" | "fs" | "env" | "process" | "thread"
+                    | "mem" | "string" | "core" => {
+                        // Legacy single-word modules - convert to std:: form
+                        let module_name = format!("std::{}", root);
+                        self.imported_std_modules.insert(module_name.clone());
+                        self.register_std_module_functions(&module_name);
+                        Ok(ZyraType::Void)
+                    }
+                    "src" => {
+                        // Local module imports - handled by resolver
                         Ok(ZyraType::Void)
                     }
                     _ => {
-                        // User-defined module - allow for now
+                        // Local module imports (utils, player, etc.) - handled by resolver
+                        // These are allowed and resolved by ModuleResolver
                         Ok(ZyraType::Void)
                     }
                 }
@@ -796,7 +1246,7 @@ impl SemanticAnalyzer {
                     Expression::Identifier { name, .. } => name.clone(),
                     Expression::FieldAccess { object, field, .. } => {
                         if let Expression::Identifier { name, .. } = object.as_ref() {
-                            format!("{}.{}", name, field)
+                            format!("{}::{}", name, field)
                         } else {
                             // Method call on expression
                             field.clone()
@@ -804,6 +1254,24 @@ impl SemanticAnalyzer {
                     }
                     _ => return Ok(ZyraType::Unknown),
                 };
+
+                // *** STDLIB IMPORT ENFORCEMENT ***
+                // Check if this is a stdlib function that requires import
+                if self.is_stdlib_function(&func_name)
+                    && !self.is_stdlib_function_available(&func_name)
+                {
+                    let module = self
+                        .get_stdlib_module_for_function(&func_name)
+                        .unwrap_or("std::?");
+                    return Err(ZyraError::new(
+                        "ImportError",
+                        &format!(
+                            "Function '{}' requires import. Add: import {};",
+                            func_name, module
+                        ),
+                        Some(SourceLocation::new("", span.line, span.column)),
+                    ));
+                }
 
                 // Check argument types
                 for arg in arguments {

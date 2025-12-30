@@ -106,7 +106,7 @@ impl ModuleResolver {
             if let Statement::Import {
                 path,
                 items: _,
-                span: _,
+                span,
             } = stmt
             {
                 // Skip stdlib imports
@@ -114,12 +114,41 @@ impl ModuleResolver {
                     continue;
                 }
 
+                // Get module name (last part of path)
+                let module_name = path.last().cloned().unwrap_or_default();
+
+                // Prevent importing main.zr
+                if module_name == "main" {
+                    return Err(ZyraError::new(
+                        "ImportError",
+                        "Cannot import 'main' - it is the entry point and cannot be imported",
+                        Some(crate::error::SourceLocation::new(
+                            "",
+                            span.line,
+                            span.column,
+                        )),
+                    ));
+                }
+
                 // Load the module
                 if let Some(module_program) = self.load_module(path)? {
-                    // Add all non-import statements from the module
-                    for module_stmt in module_program.statements {
-                        if !matches!(module_stmt, Statement::Import { .. }) {
-                            imported_statements.push(module_stmt);
+                    // Add statements from the module
+                    for mut module_stmt in module_program.statements {
+                        match &module_stmt {
+                            // Keep stdlib imports so semantic analyzer sees them
+                            Statement::Import {
+                                path: import_path, ..
+                            } => {
+                                if Self::is_stdlib_import(import_path) {
+                                    imported_statements.push(module_stmt);
+                                }
+                                // Skip local module imports (they would have been resolved separately)
+                            }
+                            _ => {
+                                // Add namespace prefix to function and struct names
+                                Self::add_namespace_prefix(&module_name, &mut module_stmt);
+                                imported_statements.push(module_stmt);
+                            }
                         }
                     }
                 }
@@ -133,5 +162,21 @@ impl ModuleResolver {
         program.statements.extend(original_statements);
 
         Ok(())
+    }
+
+    /// Add namespace prefix to function and struct names
+    fn add_namespace_prefix(module_name: &str, stmt: &mut Statement) {
+        match stmt {
+            Statement::Function { name, .. } => {
+                *name = format!("{}::{}", module_name, name);
+            }
+            Statement::Struct { name, .. } => {
+                *name = format!("{}::{}", module_name, name);
+            }
+            Statement::Enum { name, .. } => {
+                *name = format!("{}::{}", module_name, name);
+            }
+            _ => {}
+        }
     }
 }

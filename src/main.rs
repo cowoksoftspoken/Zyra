@@ -165,6 +165,11 @@ fn run_file(path: &str) {
 }
 
 fn run_file_internal(path: &str) -> Result<(), ZyraError> {
+    // Check if it's a compiled bytecode file
+    if path.ends_with(".zyc") {
+        return run_bytecode_file(path);
+    }
+
     let source = read_source_file(path)?;
 
     // Lexical analysis
@@ -191,6 +196,30 @@ fn run_file_internal(path: &str) -> Result<(), ZyraError> {
     let bytecode = compiler.compile(&ast)?;
 
     // Execution
+    let mut vm = VM::new();
+    vm.run(&bytecode)?;
+
+    Ok(())
+}
+
+/// Run a pre-compiled bytecode file
+fn run_bytecode_file(path: &str) -> Result<(), ZyraError> {
+    use zyra::compiler::bytecode::Bytecode;
+
+    // Read bytecode file
+    let data = fs::read(path).map_err(|e| {
+        ZyraError::new(
+            "FileError",
+            &format!("Could not read bytecode file '{}': {}", path, e),
+            None,
+        )
+    })?;
+
+    // Deserialize bytecode
+    let bytecode = Bytecode::deserialize(&data)
+        .map_err(|e| ZyraError::new("BytecodeError", e.as_str(), None))?;
+
+    // Execute
     let mut vm = VM::new();
     vm.run(&bytecode)?;
 
@@ -273,7 +302,13 @@ fn build_file_internal(path: &str) -> Result<String, ZyraError> {
 
     // Parsing
     let mut parser = Parser::new(tokens);
-    let ast = parser.parse()?;
+    let mut ast = parser.parse()?;
+
+    // Module Resolution - merge imported modules
+    let file_path = Path::new(path);
+    let base_dir = file_path.parent().unwrap_or_else(|| Path::new("."));
+    let mut resolver = ModuleResolver::new(base_dir);
+    resolver.resolve_imports(&mut ast)?;
 
     // Semantic analysis
     let mut analyzer = SemanticAnalyzer::new();
@@ -373,6 +408,7 @@ edition = "2025"
 
 [dependencies]
 # Add dependencies here
+# not supported yet
 
 [build]
 entry = "main.zr"

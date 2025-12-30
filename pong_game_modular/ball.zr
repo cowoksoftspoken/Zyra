@@ -1,0 +1,92 @@
+// ball.zr - Ball physics and movement module
+// All functions are accessed as ball::function_name()
+
+// Reset ball to center with given direction
+func reset(direction: Int) -> Int {
+    // direction: 1 = right, -1 = left  
+    // Returns initial ball_dx
+    if direction > 0 {
+        2  // Moving right
+    } else {
+        0 - 2  // Moving left
+    }
+}
+
+// Calculate new ball position (add velocity)
+func move_x(ball_x: Int, ball_dx: Int) -> Int {
+    ball_x + ball_dx
+}
+
+func move_y(ball_y: Int, ball_dy: Int) -> Int {
+    ball_y + ball_dy
+}
+
+// Check if ball hit top boundary
+func hit_top(ball_y: Int) -> Bool {
+    ball_y <= 0
+}
+
+// Check if ball hit bottom boundary
+func hit_bottom(ball_y: Int) -> Bool {
+    ball_y >= 583
+}
+
+// Bounce ball vertically (negate Y velocity)
+func bounce_y(ball_dy: Int) -> Int {
+    0 - ball_dy
+}
+
+// Bounce ball horizontally (negate X velocity)
+func bounce_x(ball_dx: Int) -> Int {
+    0 - ball_dx
+}
+
+// Check if ball is in paddle collision zone (left paddle)
+func in_left_zone(ball_x: Int) -> Bool {
+    ball_x <= 35
+}
+
+// Check if ball is in paddle collision zone (right paddle)
+func in_right_zone(ball_x: Int) -> Bool {
+    ball_x >= 748
+}
+
+// Check if ball hit paddle vertically
+func hit_paddle(ball_y: Int, ball_size: Int, paddle_y: Int, paddle_h: Int) -> Bool {
+    if ball_y + ball_size >= paddle_y {
+        if ball_y <= paddle_y + paddle_h {
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+// Speed up ball slightly (with max limit)
+func speed_up(ball_dx: Int) -> Int {
+    if ball_dx > 0 {
+        if ball_dx < 5 {
+            ball_dx + 1
+        } else {
+            ball_dx
+        }
+    } else {
+        if ball_dx > 0 - 5 {
+            ball_dx - 1
+        } else {
+            ball_dx
+        }
+    }
+}
+
+// Check if ball scored on left (player 2 scores)
+func scored_left(ball_x: Int) -> Bool {
+    ball_x < 0
+}
+
+// Check if ball scored on right (player 1 scores)
+func scored_right(ball_x: Int) -> Bool {
+    ball_x > 800
+}

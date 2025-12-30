@@ -1,0 +1,23 @@
+{
+  "name": "zyralang--icons",
+  "displayName": "Zyra Language File Icons",
+  "version": "0.0.1",
+  "publisher": "zyra",
+  "engines": {
+    "vscode": "^1.80.0",
+    "antigravity": "^0.10.5"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/cowoksoftspoken/Zyra/extensions/ZyraFileIcons"
+  },
+  "contributes": {
+    "iconThemes": [
+      {
+        "id": "zyralang-icons",
+        "label": "Zyra Language Icons",
+        "path": "./icons/zyralang-icon-theme.json"
+      }
+    ]
+  }
+}

@@ -5,7 +5,6 @@ edition = "2025"
 
 [dependencies]
 # Add dependencies here
-# not supported yet
 
 [build]
 entry = "main.zr"

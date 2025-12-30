@@ -1,4 +1,4 @@
-// Pong Game - Playable Graphical Version with AI
+// Pong Game - Playable Graphical Version with AI Included
 //
 // Controls:
 // - Player 1: W (up), S (down)
@@ -6,6 +6,7 @@
 // - ESC to quit
 
 import std::game;
+import std::time;
 
 func main() {
     println("==========================================");
