@@ -118,8 +118,6 @@ func main() {
         win.display();
     };
 };
-
-main();
 ```
 
 ## Standard Library
