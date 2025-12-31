@@ -249,6 +249,21 @@ pub enum Expression {
         else_block: Option<Block>,
         span: Span,
     },
+
+    /// Struct instantiation: StructName { field: value, ... }
+    StructInit {
+        name: String,
+        fields: Vec<(String, Expression)>,
+        span: Span,
+    },
+
+    /// Enum variant: EnumName::Variant or EnumName::Variant(data)
+    EnumVariant {
+        enum_name: String,
+        variant: String,
+        data: Option<Box<Expression>>,
+        span: Span,
+    },
 }
 
 impl Expression {
@@ -273,6 +288,8 @@ impl Expression {
             Expression::Range { span, .. } => *span,
             Expression::Grouped { span, .. } => *span,
             Expression::If { span, .. } => *span,
+            Expression::StructInit { span, .. } => *span,
+            Expression::EnumVariant { span, .. } => *span,
         }
     }
 }

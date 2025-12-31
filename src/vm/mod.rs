@@ -8,7 +8,7 @@ pub mod value;
 use crate::compiler::{Bytecode, FunctionDef, Instruction};
 use crate::error::{ZyraError, ZyraResult};
 use crate::stdlib::StdLib;
-pub use heap::{HeapError, HeapManager};
+pub use heap::{Heap, HeapId, HeapObject};
 pub use value::Value;
 
 use std::collections::HashMap;
@@ -44,6 +44,8 @@ pub struct VM {
     stdlib: StdLib,
     halted: bool,
     main_called: bool, // Track if main() was already called
+    /// Heap for reference-counted objects (structs, enums, vecs, strings)
+    heap: Heap,
 }
 
 impl VM {
@@ -56,6 +58,7 @@ impl VM {
             stdlib: StdLib::new(),
             halted: false,
             main_called: false,
+            heap: Heap::new(),
         }
     }
 
@@ -121,16 +124,27 @@ impl VM {
 
             Instruction::LoadVar(name) => {
                 let value = self.get_variable(name)?;
+                if let Value::Ref(heap_id) = value {
+                    let _ = self.heap.inc_ref(heap_id);
+                }
                 self.stack.push(value);
             }
 
             Instruction::StoreVar(name) => {
                 let value = self.pop()?;
+                // Note: set_variable overwrites old. We need to handle old value decrement inside set_variable
+                // OR we check here? set_variable logic handles scopes.
+                // We should update set_variable (helper) instead of here if possible,
+                // but if we do it here, we might miss other calls.
+                // Let's rely on updated set_variable (Task: Update set_variable next).
                 self.set_variable(name, value);
             }
 
             Instruction::Pop => {
-                self.pop()?;
+                let val = self.pop()?;
+                if let Value::Ref(heap_id) = val {
+                    let _ = self.heap.dec_ref(heap_id);
+                }
             }
 
             // Arithmetic
@@ -144,6 +158,15 @@ impl VM {
                         b.type_name()
                     ))
                 })?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -157,6 +180,15 @@ impl VM {
                         a.type_name()
                     ))
                 })?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -170,6 +202,15 @@ impl VM {
                         b.type_name()
                     ))
                 })?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -179,6 +220,15 @@ impl VM {
                 let result = a.div(&b).ok_or_else(|| {
                     ZyraError::runtime_error("Division error (possibly division by zero)")
                 })?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -188,6 +238,15 @@ impl VM {
                 let result = a
                     .modulo(&b)
                     .ok_or_else(|| ZyraError::runtime_error("Modulo error"))?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -196,6 +255,12 @@ impl VM {
                 let result = a.neg().ok_or_else(|| {
                     ZyraError::runtime_error(&format!("Cannot negate {}", a.type_name()))
                 })?;
+
+                // Cleanup operand
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -204,6 +269,14 @@ impl VM {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.stack.push(a.eq(&b));
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
             }
 
             Instruction::Neq => {
@@ -211,6 +284,14 @@ impl VM {
                 let a = self.pop()?;
                 let eq = a.eq(&b);
                 self.stack.push(eq.not());
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
             }
 
             Instruction::Lt => {
@@ -223,6 +304,15 @@ impl VM {
                         b.type_name()
                     ))
                 })?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -236,6 +326,15 @@ impl VM {
                         b.type_name()
                     ))
                 })?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -249,6 +348,15 @@ impl VM {
                         b.type_name()
                     ))
                 })?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -262,6 +370,15 @@ impl VM {
                         b.type_name()
                     ))
                 })?;
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
+
                 self.stack.push(result);
             }
 
@@ -270,17 +387,38 @@ impl VM {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.stack.push(Value::Bool(a.is_truthy() && b.is_truthy()));
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
             }
 
             Instruction::Or => {
                 let b = self.pop()?;
                 let a = self.pop()?;
                 self.stack.push(Value::Bool(a.is_truthy() || b.is_truthy()));
+
+                // Cleanup operands
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
+                if let Value::Ref(id) = b {
+                    let _ = self.heap.dec_ref(id);
+                }
             }
 
             Instruction::Not => {
                 let a = self.pop()?;
                 self.stack.push(a.not());
+
+                // Cleanup operand
+                if let Value::Ref(id) = a {
+                    let _ = self.heap.dec_ref(id);
+                }
             }
 
             // Control flow
@@ -309,6 +447,47 @@ impl VM {
                 } else if let Some(func) = bytecode.functions.get(name) {
                     // User-defined function
                     self.call_function(func, args)?;
+                } else if name.contains('.') {
+                    // Method call: try to dispatch dynamically based on object's _type
+                    // Format: "var.method" - use first arg to find type
+                    if let Some(method_name) = name.split('.').last() {
+                        if !args.is_empty() {
+                            if let Value::Object(fields) = &args[0] {
+                                if let Some(Value::String(type_name)) = fields.get("_type") {
+                                    let full_method_name =
+                                        format!("{}::{}", type_name, method_name);
+                                    if let Some(func) = bytecode.functions.get(&full_method_name) {
+                                        self.call_function(func, args)?;
+                                    } else {
+                                        return Err(ZyraError::runtime_error(&format!(
+                                            "Unknown method: '{}'",
+                                            full_method_name
+                                        )));
+                                    }
+                                } else {
+                                    return Err(ZyraError::runtime_error(&format!(
+                                        "Cannot call method '{}' on non-struct value",
+                                        name
+                                    )));
+                                }
+                            } else {
+                                return Err(ZyraError::runtime_error(&format!(
+                                    "Cannot call method '{}' on non-struct value",
+                                    name
+                                )));
+                            }
+                        } else {
+                            return Err(ZyraError::runtime_error(&format!(
+                                "Method call '{}' requires a receiver",
+                                name
+                            )));
+                        }
+                    } else {
+                        return Err(ZyraError::runtime_error(&format!(
+                            "Unknown function: '{}'",
+                            name
+                        )));
+                    }
                 } else {
                     return Err(ZyraError::runtime_error(&format!(
                         "Unknown function: '{}'",
@@ -317,13 +496,120 @@ impl VM {
                 }
             }
 
+            Instruction::MethodCall(method_name, arg_count) => {
+                // MethodCall: receiver is pushed first, then args
+                // Stack order: [receiver, arg1, arg2, ...]
+                // Pop args first (in reverse), then receiver
+                let mut args = Vec::new();
+                for _ in 0..*arg_count {
+                    args.push(self.pop()?);
+                }
+                args.reverse();
+
+                // Pop the receiver (first argument is the struct)
+                let receiver = self.pop()?;
+
+                // Get the type from the receiver's _type field
+                // Handle both Value::Ref (heap-allocated) and Value::Object (legacy)
+                let type_name_opt = match &receiver {
+                    Value::Ref(heap_id) => {
+                        // Dereference from heap
+                        if let Some(heap_obj) = self.heap.get(*heap_id) {
+                            if let Value::Object(fields) = &heap_obj.data {
+                                fields.get("_type").and_then(|v| {
+                                    if let Value::String(s) = v {
+                                        Some(s.clone())
+                                    } else {
+                                        None
+                                    }
+                                })
+                            } else {
+                                None
+                            }
+                        } else {
+                            None
+                        }
+                    }
+                    Value::Object(fields) => fields.get("_type").and_then(|v| {
+                        if let Value::String(s) = v {
+                            Some(s.clone())
+                        } else {
+                            None
+                        }
+                    }),
+                    _ => None,
+                };
+
+                if let Some(type_name) = type_name_opt {
+                    let full_method_name = format!("{}::{}", type_name, method_name);
+                    if let Some(func) = bytecode.functions.get(&full_method_name) {
+                        // Phase 8: Access Control
+                        // Check if the method requires unique mutable access ("mut self")
+                        let is_mutable = func
+                            .params
+                            .first()
+                            .map(|p| p.contains("mut self"))
+                            .unwrap_or(false);
+
+                        if is_mutable {
+                            if let Value::Ref(heap_id) = receiver {
+                                if let Some(heap_obj) = self.heap.get(heap_id) {
+                                    // Rule: "Effective Uniqueness"
+                                    // 1. Owner variable (if loaded from var) -> +1
+                                    // 2. Stack temporary (receiver arg) -> +1
+                                    // Total valid count = 2.
+                                    // If > 2, it is shared by multiple variables -> Unsafe for mutation.
+                                    // If called on Rvalue (make_obj().mut()), count is 1. Safe.
+                                    if heap_obj.ref_count > 2 {
+                                        return Err(ZyraError::runtime_error(&format!(
+                                            "Cannot borrow mutable reference to object with shared ownership (ref_count = {}). Ensure the object is unique or move it.",
+                                            heap_obj.ref_count
+                                        )));
+                                    }
+                                }
+                            }
+                        }
+
+                        // Prepend receiver to args for self parameter
+                        let mut all_args = vec![receiver.clone()];
+                        all_args.extend(args);
+                        self.call_function(func, all_args)?;
+                    } else {
+                        return Err(ZyraError::runtime_error(&format!(
+                            "Unknown method: '{}' on type '{}'",
+                            method_name, type_name
+                        )));
+                    }
+                } else {
+                    return Err(ZyraError::runtime_error(&format!(
+                        "Cannot call method '{}' on non-struct value (no _type field)",
+                        method_name
+                    )));
+                }
+            }
+
             Instruction::Return => {
                 let return_value = self.stack.pop().unwrap_or(Value::None);
 
+                // Since we are about to drop scopes, if return_value was a local variable,
+                // it would be dec_ref'd. We must ensure it survives.
+                // Assuming "Stack Owned" convention, return_value already has +1.
+                // But since logic isn't fully migrated, we'll implement a safety increment if it matches a stack convention,
+                // OR we rely on LoadVar cloning. For now, we assume LoadVar clones.
+                // IF LoadVar implies +1, then return_value has +1.
+                // When we drop scope, local `x` goes -1.
+                // So return_value (+1) survives. Correct.
+
                 if let Some(frame) = self.call_stack.pop() {
-                    // Restore scope
+                    // Restore scope: Pop all scopes up to base_pointer
                     while self.scopes.len() > frame.base_pointer {
-                        self.scopes.pop();
+                        if let Some(scope) = self.scopes.pop() {
+                            for (_, value) in scope.variables {
+                                if let Value::Ref(heap_id) = value {
+                                    let _ = self.heap.dec_ref(heap_id);
+                                }
+                            }
+                        }
                     }
                     self.ip = frame.return_address;
                     self.stack.push(return_value);
@@ -353,7 +639,9 @@ impl VM {
                         fields.insert(k, value);
                     }
                 }
-                self.stack.push(Value::Object(fields));
+                // Allocate object on heap and push reference
+                let heap_id = self.heap.alloc(Value::Object(fields));
+                self.stack.push(Value::Ref(heap_id));
             }
 
             Instruction::GetField(field) => {
@@ -362,6 +650,25 @@ impl VM {
                     Value::Object(fields) => {
                         let value = fields.get(field).cloned().unwrap_or(Value::None);
                         self.stack.push(value);
+                    }
+                    Value::Ref(heap_id) => {
+                        // Auto-deref: get field from heap object
+                        if let Some(heap_obj) = self.heap.get(heap_id) {
+                            if let Value::Object(fields) = &heap_obj.data {
+                                let value = fields.get(field).cloned().unwrap_or(Value::None);
+                                self.stack.push(value);
+                            } else {
+                                return Err(ZyraError::runtime_error(&format!(
+                                    "Cannot access field '{}' on non-object heap value",
+                                    field
+                                )));
+                            }
+                        } else {
+                            return Err(ZyraError::runtime_error(&format!(
+                                "Invalid heap reference: {}",
+                                heap_id
+                            )));
+                        }
                     }
                     Value::Window(state) => {
                         // Window method access
@@ -391,12 +698,31 @@ impl VM {
             }
 
             Instruction::SetField(field) => {
+                // Stack order: [value, obj] - obj on top (pushed last by compiler)
+                let obj = self.pop()?;
                 let value = self.pop()?;
-                let mut obj = self.pop()?;
-                if let Value::Object(ref mut fields) = obj {
-                    fields.insert(field.clone(), value);
+                match obj {
+                    Value::Ref(heap_id) => {
+                        if let Some(heap_obj) = self.heap.get_mut(heap_id) {
+                            if let Value::Object(ref mut fields) = heap_obj.data {
+                                if let Some(old_val) = fields.insert(field.clone(), value) {
+                                    if let Value::Ref(old_id) = old_val {
+                                        let _ = self.heap.dec_ref(old_id);
+                                    }
+                                }
+                            }
+                        }
+                        // Push back the ref (for chaining)
+                        self.stack.push(Value::Ref(heap_id));
+                    }
+                    Value::Object(mut fields) => {
+                        fields.insert(field.clone(), value);
+                        self.stack.push(Value::Object(fields));
+                    }
+                    _ => {
+                        self.stack.push(obj);
+                    }
                 }
-                self.stack.push(obj);
             }
 
             Instruction::GetIndex => {
@@ -459,12 +785,22 @@ impl VM {
             }
 
             Instruction::ExitScope => {
-                self.scopes.pop();
+                if let Some(scope) = self.scopes.pop() {
+                    // Decrement ref counts for all variables in scope
+                    for (_, value) in scope.variables {
+                        if let Value::Ref(heap_id) = value {
+                            let _ = self.heap.dec_ref(heap_id);
+                        }
+                    }
+                }
             }
 
             Instruction::Print => {
                 let value = self.pop()?;
                 println!("{}", value);
+                if let Value::Ref(id) = value {
+                    let _ = self.heap.dec_ref(id);
+                }
             }
 
             Instruction::Nop => {}
@@ -569,13 +905,23 @@ impl VM {
         // First, check if the variable exists in any outer scope and update it there
         for scope in self.scopes.iter_mut().rev() {
             if scope.variables.contains_key(name) {
-                scope.variables.insert(name.to_string(), value);
+                if let Some(old_value) = scope.variables.insert(name.to_string(), value) {
+                    if let Value::Ref(heap_id) = old_value {
+                        let _ = self.heap.dec_ref(heap_id);
+                    }
+                }
                 return;
             }
         }
         // If not found, create it in the innermost scope (for new let bindings)
         if let Some(scope) = self.scopes.last_mut() {
-            scope.variables.insert(name.to_string(), value);
+            // Note: If we are initializing a new variable, insert returns None.
+            // If we are shadowing/overwriting in the same scope (if feasible), it returns Some.
+            if let Some(old_value) = scope.variables.insert(name.to_string(), value) {
+                if let Value::Ref(heap_id) = old_value {
+                    let _ = self.heap.dec_ref(heap_id);
+                }
+            }
         }
     }
 
@@ -592,6 +938,10 @@ impl VM {
     fn remove_variable(&mut self, name: &str) -> Option<Value> {
         for scope in self.scopes.iter_mut().rev() {
             if let Some(value) = scope.variables.remove(name) {
+                // If it's a reference type (heap ptr), decrement ref count
+                if let Value::Ref(heap_id) = value {
+                    let _ = self.heap.dec_ref(heap_id);
+                }
                 return Some(value);
             }
         }

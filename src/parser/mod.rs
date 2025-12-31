@@ -221,6 +221,54 @@ impl Parser {
                         SourceLocation::new("", param_span.line, param_span.column),
                     ));
                 }
+            } else if self.check(&TokenKind::SelfType) {
+                // Plain self parameter (takes ownership)
+                self.advance(); // consume self
+                let span = Span::new(
+                    param_span.start,
+                    self.previous().span.end,
+                    param_span.line,
+                    param_span.column,
+                );
+                params.push(Parameter {
+                    name: "self".to_string(),
+                    param_type: Type::SelfType,
+                    span,
+                });
+            } else if self.check(&TokenKind::Mut) {
+                // Check for 'mut self'
+                self.advance(); // consume mut
+                if self.check(&TokenKind::SelfType) {
+                    self.advance(); // consume self
+                    let span = Span::new(
+                        param_span.start,
+                        self.previous().span.end,
+                        param_span.line,
+                        param_span.column,
+                    );
+                    params.push(Parameter {
+                        name: "mut self".to_string(),
+                        param_type: Type::SelfType,
+                        span,
+                    });
+                } else {
+                    // It's 'mut name: Type' - mutable parameter
+                    let name = self.expect_identifier("Expected parameter name after 'mut'")?;
+                    self.expect(&TokenKind::Colon, "Expected ':' after parameter name")?;
+                    let param_type = self.parse_type()?;
+
+                    let span = Span::new(
+                        param_span.start,
+                        self.previous().span.end,
+                        param_span.line,
+                        param_span.column,
+                    );
+                    params.push(Parameter {
+                        name: format!("mut {}", name),
+                        param_type,
+                        span,
+                    });
+                }
             } else {
                 // Regular parameter: name: Type
                 let name = self.expect_identifier("Expected parameter name")?;
@@ -1002,7 +1050,7 @@ impl Parser {
             }
 
             TokenKind::Identifier(name) => {
-                // Check for qualified path (module::function)
+                // Check for qualified path (module::function or module::StructName)
                 let mut full_path = name;
                 while self.check(&TokenKind::ColonColon) {
                     self.advance(); // Consume ::
@@ -1016,11 +1064,125 @@ impl Parser {
                         ));
                     }
                 }
-                Ok(Expression::Identifier {
-                    name: full_path,
-                    span,
-                })
+
+                // Check for struct instantiation: StructName { field: value, ... }
+                // Ambiguity fix: Only parse as struct if name starts with Uppercase (PascalCase)
+                // This prevents `if var {` from being parsed as `Struct {`
+                let is_struct_name = full_path
+                    .split("::")
+                    .last()
+                    .and_then(|s| s.chars().next())
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
+
+                if is_struct_name && self.check(&TokenKind::LeftBrace) {
+                    self.advance(); // Consume {
+                    let mut fields = Vec::new();
+
+                    while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+                        // Parse field name
+                        let field_name = if let TokenKind::Identifier(fname) = &self.peek().kind {
+                            let fname = fname.clone();
+                            self.advance();
+                            fname
+                        } else {
+                            return Err(ZyraError::syntax_error(
+                                "Expected field name in struct initializer",
+                                SourceLocation::new(
+                                    "",
+                                    self.peek().span.line,
+                                    self.peek().span.column,
+                                ),
+                            ));
+                        };
+
+                        // Check for shorthand initialization: Point { x, y }
+                        let field_value = if self.check(&TokenKind::Colon) {
+                            self.advance(); // Consumes :
+                            self.parse_expression()?
+                        } else if self.check(&TokenKind::Comma)
+                            || self.check(&TokenKind::RightBrace)
+                        {
+                            // Shorthand: field implies field: field
+                            Expression::Identifier {
+                                name: field_name.clone(),
+                                span: self.previous().span,
+                            }
+                        } else {
+                            return Err(ZyraError::syntax_error(
+                                "Expected ':' or ',' after field name in struct initializer",
+                                SourceLocation::new(
+                                    "",
+                                    self.peek().span.line,
+                                    self.peek().span.column,
+                                ),
+                            ));
+                        };
+
+                        fields.push((field_name, field_value));
+
+                        // Expect comma or end of fields
+                        if !self.check(&TokenKind::RightBrace) {
+                            self.expect(
+                                &TokenKind::Comma,
+                                "Expected ',' or '}' after struct field",
+                            )?;
+                        }
+                    }
+
+                    self.expect(
+                        &TokenKind::RightBrace,
+                        "Expected '}' to close struct initializer",
+                    )?;
+                    let end_span = self.previous().span;
+                    let span = Span::new(span.start, end_span.end, span.line, span.column);
+
+                    Ok(Expression::StructInit {
+                        name: full_path,
+                        fields,
+                        span,
+                    })
+                } else {
+                    // Check if this looks like an enum variant: EnumName::Variant
+                    // (contains :: and not followed by parentheses)
+                    if full_path.contains("::") && !self.check(&TokenKind::LeftParen) {
+                        // Parse as enum variant
+                        let parts: Vec<&str> = full_path.rsplitn(2, "::").collect();
+                        if parts.len() == 2 {
+                            let variant = parts[0].to_string();
+                            let enum_name = parts[1].to_string();
+                            // Check for variant data: EnumName::Variant(data)
+                            let data = if self.check(&TokenKind::LeftParen) {
+                                self.advance(); // consume (
+                                let expr = self.parse_expression()?;
+                                self.expect(
+                                    &TokenKind::RightParen,
+                                    "Expected ')' after enum variant data",
+                                )?;
+                                Some(Box::new(expr))
+                            } else {
+                                None
+                            };
+                            return Ok(Expression::EnumVariant {
+                                enum_name,
+                                variant,
+                                data,
+                                span,
+                            });
+                        }
+                    }
+                    Ok(Expression::Identifier {
+                        name: full_path,
+                        span,
+                    })
+                }
             }
+
+            // Handle 'self' keyword as expression (for method bodies)
+            TokenKind::SelfType => Ok(Expression::Identifier {
+                name: "self".to_string(),
+                span,
+            }),
 
             TokenKind::LeftParen => {
                 let inner = self.parse_expression()?;

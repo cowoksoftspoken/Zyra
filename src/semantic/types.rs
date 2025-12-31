@@ -61,6 +61,11 @@ pub enum ZyraType {
     /// Thread-safe channel for message passing
     Channel(Box<ZyraType>),
 
+    /// User-defined struct type
+    Struct(String),
+    /// User-defined enum type
+    Enum(String),
+
     Void,
     Never,
     Unknown,
@@ -148,6 +153,46 @@ impl ZyraType {
         matches!(self, ZyraType::F32 | ZyraType::F64)
     }
 
+    /// Returns true if this type is a Copy type (stack-only, never refcounted).
+    /// Copy types are passed by value and can be used multiple times without move.
+    pub fn is_copy_type(&self) -> bool {
+        matches!(
+            self,
+            ZyraType::I8
+                | ZyraType::I32
+                | ZyraType::I64
+                | ZyraType::U8
+                | ZyraType::U32
+                | ZyraType::U64
+                | ZyraType::F32
+                | ZyraType::F64
+                | ZyraType::Bool
+                | ZyraType::Char
+                | ZyraType::Void
+                | ZyraType::Never
+        )
+    }
+
+    /// Returns true if this type is a Reference type (heap-only, always refcounted).
+    /// Reference types are heap-allocated and tracked by reference counting.
+    pub fn is_reference_type(&self) -> bool {
+        matches!(
+            self,
+            ZyraType::String
+                | ZyraType::Vec(_)
+                | ZyraType::Array { .. }
+                | ZyraType::Object(_)
+                | ZyraType::Struct(_)
+                | ZyraType::Enum(_)
+                | ZyraType::Option(_)
+                | ZyraType::Result { .. }
+                | ZyraType::Arc(_)
+                | ZyraType::Mutex(_)
+                | ZyraType::RwLock(_)
+                | ZyraType::Channel(_)
+        )
+    }
+
     pub fn is_compatible(&self, other: &ZyraType) -> bool {
         match (self, other) {
             (ZyraType::Unknown, _) | (_, ZyraType::Unknown) => true,
@@ -176,6 +221,8 @@ impl ZyraType {
             (ZyraType::U32, ZyraType::U8) => true,
 
             (ZyraType::F64, ZyraType::F32) => true,
+            (ZyraType::F64, ZyraType::I64) => true, // Widening: Int -> Float
+            (ZyraType::F64, ZyraType::I32) => true, // Widening: Int -> Float
 
             (ZyraType::Char, ZyraType::Char) => true,
             (ZyraType::Bool, ZyraType::Bool) => true,
@@ -273,6 +320,8 @@ impl ZyraType {
             ZyraType::Mutex(inner) => format!("Mutex<{}>", inner.display_name()),
             ZyraType::RwLock(inner) => format!("RwLock<{}>", inner.display_name()),
             ZyraType::Channel(inner) => format!("Channel<{}>", inner.display_name()),
+            ZyraType::Struct(name) => name.clone(),
+            ZyraType::Enum(name) => name.clone(),
             ZyraType::Void => "Void".to_string(),
             ZyraType::Never => "Never".to_string(),
             ZyraType::Unknown => "Unknown".to_string(),

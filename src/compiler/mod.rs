@@ -66,10 +66,22 @@ impl Compiler {
         // Enter function scope
         self.bytecode.emit(Instruction::EnterScope);
 
-        // Parameters are passed on the stack, store them in reverse order
-        for param in params.iter().rev() {
-            self.bytecode
-                .emit(Instruction::StoreVar(param.name.clone()));
+        // Parameters are passed on the stack, store them in order (first arg is deepest)
+        for param in params.iter() {
+            // Normalize self parameter names: &self, &mut self, mut self -> self
+            let var_name = if param.name == "&self"
+                || param.name == "&mut self"
+                || param.name == "mut self"
+                || param.name == "self"
+            {
+                "self".to_string()
+            } else if param.name.starts_with("mut ") {
+                // Handle 'mut name' - strip the mut prefix for storage
+                param.name[4..].to_string()
+            } else {
+                param.name.clone()
+            };
+            self.bytecode.emit(Instruction::StoreVar(var_name));
         }
 
         // Compile body
@@ -288,10 +300,24 @@ impl Compiler {
                 Ok(())
             }
 
-            Statement::Impl { methods, .. } => {
-                // Compile impl methods as functions
+            Statement::Impl {
+                target_type,
+                methods,
+                ..
+            } => {
+                // Compile impl methods as functions with namespaced names
                 for method in methods {
-                    self.compile_statement(method)?;
+                    // Extract function name and compile with prefixed name
+                    if let Statement::Function {
+                        name, params, body, ..
+                    } = method.as_ref()
+                    {
+                        // Compile as target_type::method_name
+                        let prefixed_name = format!("{}::{}", target_type, name);
+                        self.compile_function(&prefixed_name, params, body)?;
+                    } else {
+                        self.compile_statement(method)?;
+                    }
                 }
                 Ok(())
             }
@@ -431,28 +457,26 @@ impl Compiler {
             Expression::Call {
                 callee, arguments, ..
             } => {
-                // Compile arguments
-                for arg in arguments {
-                    self.compile_expression(arg)?;
-                }
-
-                // Get function name
+                // Get function name and handle method calls specially
                 match callee.as_ref() {
                     Expression::Identifier { name, .. } => {
+                        // Regular function call: compile arguments then call
+                        for arg in arguments {
+                            self.compile_expression(arg)?;
+                        }
                         self.bytecode
                             .emit(Instruction::Call(name.clone(), arguments.len()));
                     }
                     Expression::FieldAccess { object, field, .. } => {
-                        // Method call: push object as first argument
+                        // Method call: push receiver FIRST, then arguments
+                        // VM expects: [receiver, arg1, arg2, ...] on stack
                         self.compile_expression(object)?;
-                        let full_name = if let Expression::Identifier { name, .. } = object.as_ref()
-                        {
-                            format!("{}.{}", name, field)
-                        } else {
-                            field.clone()
-                        };
+                        for arg in arguments {
+                            self.compile_expression(arg)?;
+                        }
+                        // Emit MethodCall with method name and arg count (not including receiver)
                         self.bytecode
-                            .emit(Instruction::Call(full_name, arguments.len() + 1));
+                            .emit(Instruction::MethodCall(field.clone(), arguments.len()));
                     }
                     _ => {
                         return Err(ZyraError::runtime_error("Invalid call target"));
@@ -560,6 +584,59 @@ impl Compiler {
                     self.bytecode.emit(Instruction::LoadConst(Value::None));
                 }
 
+                Ok(())
+            }
+
+            // Struct instantiation: StructName { field: value, ... }
+            Expression::StructInit { name, fields, .. } => {
+                // Create an Object value with _type field for struct name
+                // VM pops: value first, then key. So push: key first, then value
+                for (field_name, field_value) in fields {
+                    // Push key first (will be popped second)
+                    self.bytecode
+                        .emit(Instruction::LoadConst(Value::String(field_name.clone())));
+                    // Push value second (will be popped first)
+                    self.compile_expression(field_value)?;
+                }
+                // Include struct type as _type field (key first, then value)
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::String("_type".to_string())));
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::String(name.clone())));
+                // Create object with field count + 1 for _type field
+                self.bytecode
+                    .emit(Instruction::MakeObject(fields.len() + 1));
+                Ok(())
+            }
+
+            // Enum variant: EnumName::Variant or EnumName::Variant(data)
+            Expression::EnumVariant {
+                enum_name,
+                variant,
+                data,
+                ..
+            } => {
+                // Create object with _type = "EnumName::Variant" and optional _data field
+                // Push variant info
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::String("_type".to_string())));
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::String(format!(
+                        "{}::{}",
+                        enum_name, variant
+                    ))));
+
+                let mut field_count = 1;
+
+                if let Some(data_expr) = data {
+                    // Push data field
+                    self.bytecode
+                        .emit(Instruction::LoadConst(Value::String("_data".to_string())));
+                    self.compile_expression(data_expr)?;
+                    field_count = 2;
+                }
+
+                self.bytecode.emit(Instruction::MakeObject(field_count));
                 Ok(())
             }
         }

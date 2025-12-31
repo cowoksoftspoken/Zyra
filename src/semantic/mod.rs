@@ -55,6 +55,8 @@ pub struct SemanticAnalyzer {
     imported_std_modules: std::collections::HashSet<String>,
     /// Specific items imported from std modules (e.g., "sqrt" from "std::math")
     imported_std_items: HashMap<String, String>, // item_name -> module_name
+    /// Tracks if `self` is mutable in current method (None = not in method)
+    self_is_mutable: Option<bool>,
 }
 
 /// Function signature for type checking
@@ -82,6 +84,7 @@ impl SemanticAnalyzer {
             function_scope: None,
             imported_std_modules: std::collections::HashSet::new(),
             imported_std_items: HashMap::new(),
+            self_is_mutable: None,
         };
 
         // Register built-in functions
@@ -135,8 +138,8 @@ impl SemanticAnalyzer {
             FunctionSignature {
                 name: "Window".to_string(),
                 params: vec![
-                    ("width".to_string(), ZyraType::I32),
-                    ("height".to_string(), ZyraType::I32),
+                    ("width".to_string(), ZyraType::I64),
+                    ("height".to_string(), ZyraType::I64),
                     ("title".to_string(), ZyraType::String),
                 ],
                 return_type: ZyraType::Object(HashMap::new()),
@@ -773,12 +776,31 @@ impl SemanticAnalyzer {
                 // Register parameters
                 for param in params {
                     let param_type = ZyraType::from_ast_type(&param.param_type);
+                    // Normalize self parameter names: &self, &mut self, mut self -> self
+                    let is_self_param = param.name == "&self"
+                        || param.name == "&mut self"
+                        || param.name == "mut self"
+                        || param.name == "self";
+                    let normalized_name = if is_self_param {
+                        "self".to_string()
+                    } else if param.name.starts_with("mut ") {
+                        param.name[4..].to_string()
+                    } else {
+                        param.name.clone()
+                    };
+                    let is_mutable = param.name.contains("mut");
+
+                    // Track self mutability for method body analysis
+                    if is_self_param {
+                        self.self_is_mutable = Some(is_mutable);
+                    }
+
                     self.symbols.insert(
-                        param.name.clone(),
+                        normalized_name.clone(),
                         Symbol {
-                            name: param.name.clone(),
+                            name: normalized_name.clone(),
                             symbol_type: param_type,
-                            mutable: false, // Parameters are immutable by default
+                            mutable: is_mutable, // &mut self and mut params are mutable
                             scope_depth: self.scope_depth,
                             scope_id: self.scope_stack.current(),
                             origin: ValueOrigin::Param,
@@ -786,7 +808,7 @@ impl SemanticAnalyzer {
                         },
                     );
                     self.ownership
-                        .define(&param.name, false, span.line)
+                        .define(&normalized_name, is_mutable, span.line)
                         .map_err(|e| self.ownership_error_to_zyra(e))?;
                 }
 
@@ -816,6 +838,7 @@ impl SemanticAnalyzer {
                 }
 
                 self.current_function = None;
+                self.self_is_mutable = None;
                 self.exit_scope();
 
                 Ok(ZyraType::Void)
@@ -1230,6 +1253,37 @@ impl SemanticAnalyzer {
                             Some(SourceLocation::new("", span.line, span.column)),
                         ));
                     }
+                } else if let Expression::FieldAccess { object, field, .. } = target.as_ref() {
+                    // Check if assigning to self.field through immutable &self
+                    if let Expression::Identifier { name, .. } = object.as_ref() {
+                        if name == "self" {
+                            // Check if self is mutable in current method
+                            if let Some(is_mutable) = self.self_is_mutable {
+                                if !is_mutable {
+                                    return Err(ZyraError::ownership_error(
+                                        &format!(
+                                            "Cannot mutate field '{}' through immutable &self. Use &mut self instead",
+                                            field
+                                        ),
+                                        Some(SourceLocation::new("", span.line, span.column)),
+                                    ));
+                                }
+                            }
+                        } else {
+                            // Check if the object variable is mutable
+                            if let Some(symbol) = self.symbols.get(name) {
+                                if !symbol.mutable {
+                                    return Err(ZyraError::ownership_error(
+                                        &format!(
+                                            "Cannot mutate field '{}' of immutable variable '{}'",
+                                            field, name
+                                        ),
+                                        Some(SourceLocation::new("", span.line, span.column)),
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
 
                 let value_type = self.analyze_expression(value)?;
@@ -1274,8 +1328,9 @@ impl SemanticAnalyzer {
                 }
 
                 // Check argument types
+                let mut arg_types = Vec::new();
                 for arg in arguments {
-                    self.analyze_expression(arg)?;
+                    arg_types.push(self.analyze_expression(arg)?);
                 }
 
                 // Look up function signature
@@ -1291,6 +1346,61 @@ impl SemanticAnalyzer {
                             Some(SourceLocation::new("", span.line, span.column)),
                         ));
                     }
+
+                    // Check each argument type matches parameter type
+                    for (i, (arg_type, (_, param_type))) in
+                        arg_types.iter().zip(sig.params.iter()).enumerate()
+                    {
+                        // param_type.is_compatible(arg_type) checks if param accepts arg (widening I32->I64)
+                        if !param_type.is_compatible(arg_type)
+                            && !matches!(arg_type, ZyraType::Unknown)
+                            && !matches!(param_type, ZyraType::Unknown)
+                        {
+                            return Err(ZyraError::type_error(
+                                &format!(
+                                    "Function '{}' argument {} expects {}, got {}",
+                                    func_name,
+                                    i + 1,
+                                    param_type.display_name(),
+                                    arg_type.display_name()
+                                ),
+                                Some(SourceLocation::new("", span.line, span.column)),
+                            ));
+                        }
+                    }
+
+                    // *** MOVE SEMANTICS TRACKING ***
+                    // If argument is a variable and parameter expects ownership (not reference),
+                    // mark the variable as moved. Skip Copy types (they don't move).
+                    for (i, (arg, (_, param_type))) in
+                        arguments.iter().zip(sig.params.iter()).enumerate()
+                    {
+                        // Check if param type is NOT a reference (ownership transfer)
+                        let is_reference_param = matches!(param_type, ZyraType::Reference { .. });
+
+                        if !is_reference_param {
+                            // If argument is an identifier, check if it should be moved
+                            if let Expression::Identifier {
+                                name,
+                                span: arg_span,
+                            } = arg
+                            {
+                                // Get the argument's type from our earlier analysis
+                                let arg_type = arg_types.get(i);
+
+                                // Skip self and Copy types (Int, Float, Bool, Char - stack only)
+                                let is_copy = arg_type.map(|t| t.is_copy_type()).unwrap_or(false);
+
+                                if name != "self" && !is_copy {
+                                    // Only Reference types trigger move
+                                    // Mark as moved - subsequent use will error
+                                    let _ =
+                                        self.ownership.move_value(name, &func_name, arg_span.line);
+                                }
+                            }
+                        }
+                    }
+
                     Ok(sig.return_type.clone())
                 } else {
                     // Allow unknown functions (for flexibility)
@@ -1431,6 +1541,28 @@ impl SemanticAnalyzer {
                 } else {
                     Ok(ZyraType::Void)
                 }
+            }
+
+            // Struct instantiation: StructName { field: value, ... }
+            Expression::StructInit { name, fields, .. } => {
+                // Analyze all field values
+                for (_, field_value) in fields {
+                    self.analyze_expression(field_value)?;
+                }
+                // Return the struct type
+                Ok(ZyraType::Struct(name.clone()))
+            }
+
+            // Enum variant: EnumName::Variant
+            Expression::EnumVariant {
+                enum_name, data, ..
+            } => {
+                // Analyze data if present
+                if let Some(data_expr) = data {
+                    self.analyze_expression(data_expr)?;
+                }
+                // Return the enum type
+                Ok(ZyraType::Enum(enum_name.clone()))
             }
         }
     }

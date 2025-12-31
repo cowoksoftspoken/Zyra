@@ -1,392 +1,247 @@
-//! Heap Manager for Zyra VM
+//! Heap allocator for Zyra reference-counted objects
 //!
-//! Manages heap-allocated objects with explicit ownership tracking:
-//! - Object IDs instead of Rust references
-//! - Track Alive/Freed state
-//! - Runtime checks for use-after-free
-//! - Explicit deallocation
+//! All reference types (Struct, Enum, Vec, String) are heap-allocated.
+//! Stack variables hold Value::Ref(HeapId) pointing to heap data.
+//!
+//! Invariants:
+//! - Every Value::Ref creation must IncRef
+//! - Every overwrite, scope exit, or drop must DecRef
+//! - When ref_count reaches 0: drop fields depth-first, then release slot
 
-use super::Value;
-use std::collections::HashMap;
+use crate::error::{ZyraError, ZyraResult};
+use crate::vm::Value;
 
-/// Object ID for heap-allocated values
-pub type HeapId = u64;
+/// Unique identifier for heap objects
+pub type HeapId = usize;
 
-/// State of a heap object
-#[derive(Debug, Clone, PartialEq)]
-pub enum ObjectState {
-    /// Object is alive and valid
-    Alive,
-    /// Object has been freed  
-    Freed,
-    /// Object is currently borrowed (cannot be freed or moved)
-    Borrowed { count: usize, mutable: bool },
-}
-
-/// A heap-allocated object
+/// Object stored on the heap with reference count
 #[derive(Debug, Clone)]
 pub struct HeapObject {
-    pub id: HeapId,
-    pub value: Value,
-    pub state: ObjectState,
-    pub owner: Option<String>, // Name of owning variable
-    pub allocated_at: usize,   // Line number
+    /// The actual value stored
+    pub data: Value,
+    /// Reference count - freed when reaches 0
+    pub ref_count: usize,
 }
 
-/// Heap manager tracks all heap-allocated objects
-pub struct HeapManager {
-    /// All objects by their ID
-    objects: HashMap<HeapId, HeapObject>,
-    /// Next available ID
-    next_id: HeapId,
-    /// Free list of reusable IDs
+impl HeapObject {
+    pub fn new(data: Value) -> Self {
+        Self {
+            data,
+            ref_count: 1, // Start with count of 1 (creator owns it)
+        }
+    }
+}
+
+/// Heap storage for reference-counted objects
+#[derive(Debug)]
+pub struct Heap {
+    /// Object storage - None means slot is free
+    objects: Vec<Option<HeapObject>>,
+    /// Free list for reusing slots
     free_list: Vec<HeapId>,
-    /// Variable to HeapId mapping
-    var_to_heap: HashMap<String, HeapId>,
-    /// Reference to source mapping (which variable a reference points to)
-    ref_sources: HashMap<String, String>,
 }
 
-impl HeapManager {
+impl Heap {
     pub fn new() -> Self {
         Self {
-            objects: HashMap::new(),
-            next_id: 1, // Start from 1, 0 is reserved for null
+            objects: Vec::new(),
             free_list: Vec::new(),
-            var_to_heap: HashMap::new(),
-            ref_sources: HashMap::new(),
         }
     }
 
-    /// Allocate a new heap object
-    pub fn alloc(&mut self, value: Value, owner: Option<&str>, line: usize) -> HeapId {
-        let id = if let Some(reused_id) = self.free_list.pop() {
-            reused_id
-        } else {
-            let id = self.next_id;
-            self.next_id += 1;
+    /// Allocate a new object on the heap, returns HeapId
+    /// The new object starts with ref_count = 1
+    pub fn alloc(&mut self, value: Value) -> HeapId {
+        let obj = HeapObject::new(value);
+
+        if let Some(id) = self.free_list.pop() {
+            // Reuse a freed slot
+            self.objects[id] = Some(obj);
             id
+        } else {
+            // Allocate new slot
+            let id = self.objects.len();
+            self.objects.push(Some(obj));
+            id
+        }
+    }
+
+    /// Get immutable reference to heap object
+    pub fn get(&self, id: HeapId) -> Option<&HeapObject> {
+        self.objects.get(id).and_then(|opt| opt.as_ref())
+    }
+
+    /// Get mutable reference to heap object
+    pub fn get_mut(&mut self, id: HeapId) -> Option<&mut HeapObject> {
+        self.objects.get_mut(id).and_then(|opt| opt.as_mut())
+    }
+
+    /// Get the data value at a heap location
+    pub fn get_value(&self, id: HeapId) -> Option<&Value> {
+        self.get(id).map(|obj| &obj.data)
+    }
+
+    /// Get mutable data value at a heap location
+    pub fn get_value_mut(&mut self, id: HeapId) -> Option<&mut Value> {
+        self.get_mut(id).map(|obj| &mut obj.data)
+    }
+
+    /// Increment reference count
+    /// Called when: creating Value::Ref, copying ref, passing to function
+    pub fn inc_ref(&mut self, id: HeapId) -> ZyraResult<()> {
+        if let Some(obj) = self.get_mut(id) {
+            obj.ref_count = obj.ref_count.saturating_add(1);
+            Ok(())
+        } else {
+            Err(ZyraError::runtime_error(&format!(
+                "IncRef on invalid heap id: {}",
+                id
+            )))
+        }
+    }
+
+    /// Decrement reference count
+    /// Called when: overwriting variable, scope exit, drop
+    /// Returns true if object was freed (ref_count reached 0)
+    pub fn dec_ref(&mut self, id: HeapId) -> ZyraResult<bool> {
+        let should_free = {
+            if let Some(obj) = self.get_mut(id) {
+                obj.ref_count = obj.ref_count.saturating_sub(1);
+                obj.ref_count == 0
+            } else {
+                return Err(ZyraError::runtime_error(&format!(
+                    "DecRef on invalid heap id: {}",
+                    id
+                )));
+            }
         };
 
-        let object = HeapObject {
-            id,
-            value,
-            state: ObjectState::Alive,
-            owner: owner.map(|s| s.to_string()),
-            allocated_at: line,
-        };
-
-        self.objects.insert(id, object);
-
-        if let Some(var) = owner {
-            self.var_to_heap.insert(var.to_string(), id);
+        if should_free {
+            self.free(id)?;
+            Ok(true)
+        } else {
+            Ok(false)
         }
-
-        id
     }
 
-    /// Move ownership from one variable to another
-    pub fn move_ownership(&mut self, from: &str, to: &str) -> Result<(), HeapError> {
-        let id = self
-            .var_to_heap
-            .remove(from)
-            .ok_or_else(|| HeapError::VariableNotFound {
-                name: from.to_string(),
-            })?;
-
-        // Check if object is valid
+    /// Free a heap object and add slot to free list
+    /// Drops fields depth-first, decrements refcounts of referenced fields
+    fn free(&mut self, id: HeapId) -> ZyraResult<()> {
+        // Get the object to free
         let obj = self
             .objects
-            .get_mut(&id)
-            .ok_or_else(|| HeapError::InvalidHeapId { id })?;
+            .get_mut(id)
+            .ok_or_else(|| ZyraError::runtime_error(&format!("Free on invalid heap id: {}", id)))?;
 
-        match &obj.state {
-            ObjectState::Freed => {
-                return Err(HeapError::UseAfterFree {
-                    id,
-                    variable: from.to_string(),
-                });
-            }
-            ObjectState::Borrowed { .. } => {
-                return Err(HeapError::MoveWhileBorrowed {
-                    variable: from.to_string(),
-                });
-            }
-            ObjectState::Alive => {}
-        }
-
-        // Transfer ownership
-        obj.owner = Some(to.to_string());
-        self.var_to_heap.insert(to.to_string(), id);
-
-        Ok(())
-    }
-
-    /// Create a shared (immutable) borrow
-    pub fn borrow_shared(&mut self, source: &str, borrower: &str) -> Result<HeapId, HeapError> {
-        let id = *self
-            .var_to_heap
-            .get(source)
-            .ok_or_else(|| HeapError::VariableNotFound {
-                name: source.to_string(),
-            })?;
-
-        let obj = self
-            .objects
-            .get_mut(&id)
-            .ok_or_else(|| HeapError::InvalidHeapId { id })?;
-
-        match &mut obj.state {
-            ObjectState::Freed => {
-                return Err(HeapError::UseAfterFree {
-                    id,
-                    variable: source.to_string(),
-                });
-            }
-            ObjectState::Borrowed { mutable, count } if *mutable => {
-                return Err(HeapError::BorrowConflict {
-                    variable: source.to_string(),
-                    reason: "already mutably borrowed".to_string(),
-                });
-            }
-            ObjectState::Borrowed { count, .. } => {
-                *count += 1;
-            }
-            ObjectState::Alive => {
-                obj.state = ObjectState::Borrowed {
-                    count: 1,
-                    mutable: false,
-                };
-            }
-        }
-
-        // Track reference source
-        self.ref_sources
-            .insert(borrower.to_string(), source.to_string());
-
-        Ok(id)
-    }
-
-    /// Create a mutable borrow (exclusive)
-    pub fn borrow_mut(&mut self, source: &str, borrower: &str) -> Result<HeapId, HeapError> {
-        let id = *self
-            .var_to_heap
-            .get(source)
-            .ok_or_else(|| HeapError::VariableNotFound {
-                name: source.to_string(),
-            })?;
-
-        let obj = self
-            .objects
-            .get_mut(&id)
-            .ok_or_else(|| HeapError::InvalidHeapId { id })?;
-
-        match &obj.state {
-            ObjectState::Freed => {
-                return Err(HeapError::UseAfterFree {
-                    id,
-                    variable: source.to_string(),
-                });
-            }
-            ObjectState::Borrowed { .. } => {
-                return Err(HeapError::BorrowConflict {
-                    variable: source.to_string(),
-                    reason: "already borrowed".to_string(),
-                });
-            }
-            ObjectState::Alive => {
-                obj.state = ObjectState::Borrowed {
-                    count: 1,
-                    mutable: true,
-                };
-            }
-        }
-
-        // Track reference source
-        self.ref_sources
-            .insert(borrower.to_string(), source.to_string());
-
-        Ok(id)
-    }
-
-    /// End a borrow
-    pub fn end_borrow(&mut self, borrower: &str) -> Result<(), HeapError> {
-        let source =
-            self.ref_sources
-                .remove(borrower)
-                .ok_or_else(|| HeapError::VariableNotFound {
-                    name: borrower.to_string(),
-                })?;
-
-        let id = *self
-            .var_to_heap
-            .get(&source)
-            .ok_or_else(|| HeapError::VariableNotFound {
-                name: source.clone(),
-            })?;
-
-        let obj = self
-            .objects
-            .get_mut(&id)
-            .ok_or_else(|| HeapError::InvalidHeapId { id })?;
-
-        match &mut obj.state {
-            ObjectState::Borrowed { count, mutable: _ } => {
-                *count -= 1;
-                if *count == 0 {
-                    obj.state = ObjectState::Alive;
+        if let Some(heap_obj) = obj.take() {
+            // Drop fields depth-first if it's an object
+            if let Value::Object(fields) = &heap_obj.data {
+                // Collect ref ids to decrement (avoid borrow issues)
+                let mut refs_to_dec: Vec<HeapId> = Vec::new();
+                for value in fields.values() {
+                    if let Value::Ref(ref_id) = value {
+                        refs_to_dec.push(*ref_id);
+                    }
+                }
+                // Now decrement refs (may trigger recursive free)
+                for ref_id in refs_to_dec {
+                    // Ignore errors for now (defensive)
+                    let _ = self.dec_ref(ref_id);
                 }
             }
-            _ => {}
+
+            // Add slot to free list
+            self.free_list.push(id);
         }
 
         Ok(())
     }
 
-    /// Free/drop a heap object
-    pub fn free(&mut self, var: &str) -> Result<Value, HeapError> {
-        let id = self
-            .var_to_heap
-            .remove(var)
-            .ok_or_else(|| HeapError::VariableNotFound {
-                name: var.to_string(),
-            })?;
+    /// Get the reference count for an object
+    pub fn ref_count(&self, id: HeapId) -> Option<usize> {
+        self.get(id).map(|obj| obj.ref_count)
+    }
 
-        let obj = self
-            .objects
-            .get_mut(&id)
-            .ok_or_else(|| HeapError::InvalidHeapId { id })?;
-
-        match &obj.state {
-            ObjectState::Freed => {
-                return Err(HeapError::DoubleFree {
-                    variable: var.to_string(),
-                });
+    /// Check if &mut self is valid (ref_count == 1)
+    /// Panics if ref_count > 1 as per runtime enforcement
+    pub fn check_exclusive_borrow(&self, id: HeapId) -> ZyraResult<()> {
+        if let Some(count) = self.ref_count(id) {
+            if count == 1 {
+                Ok(())
+            } else {
+                Err(ZyraError::runtime_error(&format!(
+                    "Cannot mutably borrow: object has {} references (expected 1)",
+                    count
+                )))
             }
-            ObjectState::Borrowed { .. } => {
-                return Err(HeapError::FreeWhileBorrowed {
-                    variable: var.to_string(),
-                });
+        } else {
+            Err(ZyraError::runtime_error(&format!(
+                "Cannot borrow invalid heap id: {}",
+                id
+            )))
+        }
+    }
+
+    /// Debug: print heap state
+    #[allow(dead_code)]
+    pub fn debug_print(&self) {
+        println!("=== Heap State ===");
+        for (i, slot) in self.objects.iter().enumerate() {
+            if let Some(obj) = slot {
+                println!("  [{}] rc={} data={:?}", i, obj.ref_count, obj.data);
+            } else {
+                println!("  [{}] FREE", i);
             }
-            ObjectState::Alive => {}
         }
-
-        obj.state = ObjectState::Freed;
-        self.free_list.push(id);
-
-        Ok(obj.value.clone())
-    }
-
-    /// Get value by variable name (for reading)
-    pub fn get(&self, var: &str) -> Result<&Value, HeapError> {
-        let id = self
-            .var_to_heap
-            .get(var)
-            .ok_or_else(|| HeapError::VariableNotFound {
-                name: var.to_string(),
-            })?;
-
-        let obj = self
-            .objects
-            .get(id)
-            .ok_or_else(|| HeapError::InvalidHeapId { id: *id })?;
-
-        match &obj.state {
-            ObjectState::Freed => Err(HeapError::UseAfterFree {
-                id: *id,
-                variable: var.to_string(),
-            }),
-            _ => Ok(&obj.value),
-        }
-    }
-
-    /// Get mutable value by variable name
-    pub fn get_mut(&mut self, var: &str) -> Result<&mut Value, HeapError> {
-        let id = *self
-            .var_to_heap
-            .get(var)
-            .ok_or_else(|| HeapError::VariableNotFound {
-                name: var.to_string(),
-            })?;
-
-        let obj = self
-            .objects
-            .get_mut(&id)
-            .ok_or_else(|| HeapError::InvalidHeapId { id })?;
-
-        match &obj.state {
-            ObjectState::Freed => Err(HeapError::UseAfterFree {
-                id,
-                variable: var.to_string(),
-            }),
-            ObjectState::Borrowed { mutable: false, .. } => Err(HeapError::MutateWhileBorrowed {
-                variable: var.to_string(),
-            }),
-            _ => Ok(&mut obj.value),
-        }
-    }
-
-    /// Check if a variable is on heap
-    pub fn is_heap_allocated(&self, var: &str) -> bool {
-        self.var_to_heap.contains_key(var)
-    }
-
-    /// Get source of a reference
-    pub fn get_ref_source(&self, borrower: &str) -> Option<&String> {
-        self.ref_sources.get(borrower)
+        println!("  Free list: {:?}", self.free_list);
     }
 }
 
-impl Default for HeapManager {
+impl Default for Heap {
     fn default() -> Self {
         Self::new()
     }
 }
 
-/// Heap errors
-#[derive(Debug, Clone)]
-pub enum HeapError {
-    VariableNotFound { name: String },
-    InvalidHeapId { id: HeapId },
-    UseAfterFree { id: HeapId, variable: String },
-    DoubleFree { variable: String },
-    MoveWhileBorrowed { variable: String },
-    FreeWhileBorrowed { variable: String },
-    BorrowConflict { variable: String, reason: String },
-    MutateWhileBorrowed { variable: String },
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-impl std::fmt::Display for HeapError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            HeapError::VariableNotFound { name } => {
-                write!(f, "Variable '{}' not found on heap", name)
-            }
-            HeapError::InvalidHeapId { id } => {
-                write!(f, "Invalid heap ID: {}", id)
-            }
-            HeapError::UseAfterFree { id, variable } => {
-                write!(
-                    f,
-                    "Use after free: '{}' (heap ID {}) has been freed",
-                    variable, id
-                )
-            }
-            HeapError::DoubleFree { variable } => {
-                write!(f, "Double free: '{}' already freed", variable)
-            }
-            HeapError::MoveWhileBorrowed { variable } => {
-                write!(f, "Cannot move '{}' while borrowed", variable)
-            }
-            HeapError::FreeWhileBorrowed { variable } => {
-                write!(f, "Cannot free '{}' while borrowed", variable)
-            }
-            HeapError::BorrowConflict { variable, reason } => {
-                write!(f, "Borrow conflict for '{}': {}", variable, reason)
-            }
-            HeapError::MutateWhileBorrowed { variable } => {
-                write!(f, "Cannot mutate '{}' while immutably borrowed", variable)
-            }
-        }
+    #[test]
+    fn test_alloc_and_get() {
+        let mut heap = Heap::new();
+        let id = heap.alloc(Value::I32(42));
+        assert_eq!(heap.ref_count(id), Some(1));
+        assert!(matches!(heap.get_value(id), Some(Value::I32(42))));
+    }
+
+    #[test]
+    fn test_inc_dec_ref() {
+        let mut heap = Heap::new();
+        let id = heap.alloc(Value::I32(42));
+
+        // Inc ref
+        heap.inc_ref(id).unwrap();
+        assert_eq!(heap.ref_count(id), Some(2));
+
+        // Dec ref
+        let freed = heap.dec_ref(id).unwrap();
+        assert!(!freed);
+        assert_eq!(heap.ref_count(id), Some(1));
+
+        // Dec ref again - should free
+        let freed = heap.dec_ref(id).unwrap();
+        assert!(freed);
+        assert!(heap.get(id).is_none());
+    }
+
+    #[test]
+    fn test_slot_reuse() {
+        let mut heap = Heap::new();
+        let id1 = heap.alloc(Value::I32(1));
+        let _ = heap.dec_ref(id1); // Free it
+
+        let id2 = heap.alloc(Value::I32(2));
+        assert_eq!(id1, id2); // Should reuse the slot
     }
 }

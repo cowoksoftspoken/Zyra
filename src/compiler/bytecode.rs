@@ -44,6 +44,8 @@ pub enum Instruction {
 
     // Function operations
     Call(String, usize), // function name, arg count
+    /// Method call: method name, arg count (receiver is pushed first, then args)
+    MethodCall(String, usize),
     Return,
 
     // Memory management instructions (ownership & borrowing)
@@ -134,6 +136,10 @@ pub enum Value {
         mutable: bool,
     },
     Window(WindowState),
+
+    /// Reference to heap-allocated object (Struct, Enum, Vec, String)
+    /// The usize is the HeapId for lookup in the VM's heap
+    Ref(usize),
 }
 
 /// Window state for game module
@@ -173,6 +179,7 @@ impl Value {
             Value::Err(_) => "Err",
             Value::Reference { .. } => "Reference",
             Value::Window(_) => "Window",
+            Value::Ref(_) => "Ref",
         }
     }
 
@@ -250,6 +257,7 @@ impl fmt::Display for Value {
                     state.width, state.height, state.title
                 )
             }
+            Value::Ref(id) => write!(f, "<Ref#{}>", id),
         }
     }
 }
@@ -375,6 +383,11 @@ impl Bytecode {
             Instruction::Call(name, argc) => {
                 output.push(0x50);
                 Self::serialize_string(output, name);
+                output.extend_from_slice(&(*argc as u32).to_le_bytes());
+            }
+            Instruction::MethodCall(method_name, argc) => {
+                output.push(0x52);
+                Self::serialize_string(output, method_name);
                 output.extend_from_slice(&(*argc as u32).to_le_bytes());
             }
             Instruction::Return => output.push(0x51),
