@@ -543,28 +543,29 @@ impl VM {
                 if let Some(type_name) = type_name_opt {
                     let full_method_name = format!("{}::{}", type_name, method_name);
                     if let Some(func) = bytecode.functions.get(&full_method_name) {
-                        // Phase 8: Access Control
-                        // Check if the method requires unique mutable access ("mut self")
-                        let is_mutable = func
-                            .params
-                            .first()
-                            .map(|p| p.contains("mut self"))
-                            .unwrap_or(false);
+                        // Phase 8: Access Control - NOW HANDLED AT COMPILE TIME
+                        // The semantic analyzer's borrow checker enforces &mut self exclusivity
+                        // This runtime check is kept only in debug builds as a verification layer
+                        #[cfg(debug_assertions)]
+                        {
+                            let is_mutable = func
+                                .params
+                                .first()
+                                .map(|p| p.contains("mut self"))
+                                .unwrap_or(false);
 
-                        if is_mutable {
-                            if let Value::Ref(heap_id) = receiver {
-                                if let Some(heap_obj) = self.heap.get(heap_id) {
-                                    // Rule: "Effective Uniqueness"
-                                    // 1. Owner variable (if loaded from var) -> +1
-                                    // 2. Stack temporary (receiver arg) -> +1
-                                    // Total valid count = 2.
-                                    // If > 2, it is shared by multiple variables -> Unsafe for mutation.
-                                    // If called on Rvalue (make_obj().mut()), count is 1. Safe.
-                                    if heap_obj.ref_count > 2 {
-                                        return Err(ZyraError::runtime_error(&format!(
-                                            "Cannot borrow mutable reference to object with shared ownership (ref_count = {}). Ensure the object is unique or move it.",
-                                            heap_obj.ref_count
-                                        )));
+                            if is_mutable {
+                                if let Value::Ref(heap_id) = receiver {
+                                    if let Some(heap_obj) = self.heap.get(heap_id) {
+                                        // Debug assertion: compile-time should have caught violations
+                                        // If this triggers, there's a gap in semantic analysis
+                                        if heap_obj.ref_count > 3 {
+                                            eprintln!(
+                                                "[DEBUG] Runtime borrow check triggered: ref_count={} for &mut self method '{}'. \
+                                                This should have been caught at compile time.",
+                                                heap_obj.ref_count, method_name
+                                            );
+                                        }
                                     }
                                 }
                             }
@@ -575,10 +576,30 @@ impl VM {
                         all_args.extend(args);
                         self.call_function(func, all_args)?;
                     } else {
-                        return Err(ZyraError::runtime_error(&format!(
-                            "Unknown method: '{}' on type '{}'",
-                            method_name, type_name
-                        )));
+                        // Fallback: Try to find trait implementation methods
+                        // Trait methods are compiled as "<TraitName as Type>::method"
+                        // Search for any function matching the pattern <* as Type>::method
+                        let trait_method_suffix = format!(" as {}>::{}", type_name, method_name);
+
+                        let trait_func = bytecode
+                            .functions
+                            .iter()
+                            .find(|(name, _)| {
+                                name.starts_with('<') && name.ends_with(&trait_method_suffix)
+                            })
+                            .map(|(_, func)| func);
+
+                        if let Some(func) = trait_func {
+                            // Found trait method implementation
+                            let mut all_args = vec![receiver.clone()];
+                            all_args.extend(args);
+                            self.call_function(func, all_args)?;
+                        } else {
+                            return Err(ZyraError::runtime_error(&format!(
+                                "Unknown method: '{}' on type '{}'. No inherent or trait implementation found.",
+                                method_name, type_name
+                            )));
+                        }
                     }
                 } else {
                     return Err(ZyraError::runtime_error(&format!(

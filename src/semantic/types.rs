@@ -104,7 +104,10 @@ impl ZyraType {
             ast::Type::List(inner) => ZyraType::Vec(Box::new(Self::from_ast_type(inner))),
 
             ast::Type::Object => ZyraType::Object(HashMap::new()),
-            ast::Type::Named(_) => ZyraType::Unknown,
+
+            // Centralized type resolution for Named types
+            // This is the single source of truth for mapping type names to ZyraTypes
+            ast::Type::Named(name) => Self::resolve_type_name(name),
             ast::Type::Reference {
                 lifetime,
                 mutable,
@@ -120,6 +123,44 @@ impl ZyraType {
                 // For now, just convert the inner type - lifetime is used for checking
                 Self::from_ast_type(inner)
             }
+        }
+    }
+
+    /// Resolve a type name string to a ZyraType.
+    /// This is the SINGLE SOURCE OF TRUTH for all type name resolution.
+    /// All paths (parser Named types, identifier lookups, etc.) should use this.
+    pub fn resolve_type_name(name: &str) -> ZyraType {
+        match name {
+            // Signed integers (lowercase and explicit)
+            "int" | "Int" => ZyraType::I32,
+            "i8" | "I8" => ZyraType::I8,
+            "i32" | "I32" => ZyraType::I32,
+            "i64" | "I64" => ZyraType::I64,
+
+            // Unsigned integers
+            "u8" | "U8" => ZyraType::U8,
+            "u32" | "U32" => ZyraType::U32,
+            "u64" | "U64" => ZyraType::U64,
+
+            // Floating point (lowercase and explicit)
+            "float" | "Float" => ZyraType::F32,
+            "f32" | "F32" => ZyraType::F32,
+            "f64" | "F64" => ZyraType::F64,
+
+            // Other primitives
+            "bool" | "Bool" => ZyraType::Bool,
+            "char" | "Char" => ZyraType::Char,
+            "string" | "String" => ZyraType::String,
+
+            // Special types
+            "object" | "Object" => ZyraType::Object(HashMap::new()),
+            "void" | "Void" | "()" => ZyraType::Void,
+            "never" | "Never" | "!" => ZyraType::Never,
+
+            // User-defined types: treat as Struct
+            // The type registry (SemanticAnalyzer.types) validates if they exist
+            // No uppercase/lowercase heuristic - proper validation is in semantic phase
+            other => ZyraType::Struct(other.to_string()),
         }
     }
 
@@ -256,6 +297,30 @@ impl ZyraType {
                     err_type: e2,
                 },
             ) => a.is_compatible(b) && e1.is_compatible(e2),
+
+            // User-defined nominal types: compatible if names match (nominal equality)
+            (ZyraType::Struct(a), ZyraType::Struct(b)) => a == b,
+            (ZyraType::Enum(a), ZyraType::Enum(b)) => a == b,
+
+            // Object types: structural compatibility
+            (ZyraType::Object(fields_a), ZyraType::Object(fields_b)) => {
+                // Empty objects are compatible with any object (placeholder semantics)
+                if fields_a.is_empty() || fields_b.is_empty() {
+                    return true;
+                }
+                // Structural compatibility: all fields in b must be compatible with fields in a
+                fields_b.iter().all(|(key, ty_b)| {
+                    fields_a
+                        .get(key)
+                        .map(|ty_a| ty_a.is_compatible(ty_b))
+                        .unwrap_or(false)
+                })
+            }
+
+            // Concurrency types
+            (ZyraType::Mutex(a), ZyraType::Mutex(b)) => a.is_compatible(b),
+            (ZyraType::RwLock(a), ZyraType::RwLock(b)) => a.is_compatible(b),
+            (ZyraType::Channel(a), ZyraType::Channel(b)) => a.is_compatible(b),
 
             _ => false,
         }

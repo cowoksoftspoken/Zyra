@@ -1299,22 +1299,19 @@ impl Parser {
                 let name = name.clone();
                 self.advance();
 
+                // Type name resolution is now centralized in semantic/types.rs
+                // Parser only handles syntax (Named types, Vec generics)
+                // Semantic phase's resolve_type_name handles name -> type mapping
                 match name.as_str() {
-                    "i8" => Type::I8,
-                    "i32" => Type::I32,
-                    "i64" => Type::I64,
-                    "u8" => Type::U8,
-                    "u32" => Type::U32,
-                    "u64" => Type::U64,
-                    "f32" => Type::F32,
-                    "f64" => Type::F64,
-                    "char" => Type::Char,
                     "Vec" => {
+                        // Vec requires generic type argument parsing
                         self.expect(&TokenKind::Less, "Expected '<' after 'Vec'")?;
                         let inner = self.parse_type()?;
                         self.expect(&TokenKind::Greater, "Expected '>' after vector type")?;
                         Type::Vec(Box::new(inner))
                     }
+                    // All other identifiers (primitives, user types) are Named
+                    // Semantic phase's resolve_type_name will resolve them
                     _ => Type::Named(name),
                 }
             }

@@ -1,0 +1,201 @@
+// ball.zr - Ball struct with OOP implementation
+// Tests struct, impl, and method calls
+
+struct Ball {
+    x: int,
+    y: int,
+    dx: int,
+    dy: int,
+    size: int,
+}
+
+impl Ball {
+    // Create a new ball at center
+    func new() -> Ball {
+        Ball {
+            x: 392,
+            y: 292,
+            dx: 2,
+            dy: 2,
+            size: 15,
+        }
+    }
+    
+    // Move ball by velocity
+    func update(mut self) {
+        self.x = self.x + self.dx;
+        self.y = self.y + self.dy;
+    }
+    
+    // Check top boundary hit
+    func hit_top(self) -> Bool {
+        self.y <= 0
+    }
+    
+    // Check bottom boundary hit
+    func hit_bottom(self) -> Bool {
+        self.y >= 583
+    }
+    
+    // Bounce vertically
+    func bounce_y(mut self) {
+        self.dy = 0 - self.dy;
+    }
+    
+    // Bounce horizontally
+    func bounce_x(mut self) {
+        self.dx = 0 - self.dx;
+    }
+    
+    // Check if in left paddle zone
+    func in_left_zone(self) -> Bool {
+        self.x <= 35
+    }
+    
+    // Check if in right paddle zone
+    func in_right_zone(self) -> Bool {
+        self.x >= 748
+    }
+    
+    // Check if hit paddle
+    func hit_paddle(self, paddle_y: int, paddle_h: int) -> Bool {
+        if self.y + self.size >= paddle_y {
+            if self.y <= paddle_y + paddle_h {
+                true
+            } else {
+                false
+            }
+        } else {
+            false
+        }
+    }
+    
+    // Speed up ball
+    func speed_up(mut self) {
+        if self.dx > 0 {
+            if self.dx < 5 {
+                self.dx = self.dx + 1;
+            }
+        } else {
+            if self.dx > 0 - 5 {
+                self.dx = self.dx - 1;
+            }
+        }
+    }
+    
+    // Check if scored on left
+    func scored_left(self) -> Bool {
+        self.x < 0
+    }
+    
+    // Check if scored on right
+    func scored_right(self) -> Bool {
+        self.x > 800
+    }
+    
+    // Reset ball to center
+    func reset(mut self, direction: int) {
+        self.x = 392;
+        self.y = 292;
+        self.dy = 2;
+        if direction > 0 {
+            self.dx = 2;
+        } else {
+            self.dx = 0 - 2;
+        }
+    }
+    
+    // Fix position after bounce
+    func fix_top(mut self) {
+        self.y = 1;
+    }
+    
+    func fix_bottom(mut self) {
+        self.y = 582;
+    }
+    
+    func fix_left(mut self) {
+        self.x = 36;
+    }
+    
+    func fix_right(mut self) {
+        self.x = 747;
+    }
+}
+
+// Legacy functions for backwards compatibility
+func reset(direction: int) -> int {
+    if direction > 0 {
+        2
+    } else {
+        0 - 2
+    }
+}
+
+func move_x(ball_x: int, ball_dx: int) -> int {
+    ball_x + ball_dx
+}
+
+func move_y(ball_y: int, ball_dy: int) -> int {
+    ball_y + ball_dy
+}
+
+func hit_top(ball_y: int) -> Bool {
+    ball_y <= 0
+}
+
+func hit_bottom(ball_y: int) -> Bool {
+    ball_y >= 583
+}
+
+func bounce_y(ball_dy: int) -> int {
+    0 - ball_dy
+}
+
+func bounce_x(ball_dx: int) -> int {
+    0 - ball_dx
+}
+
+func in_left_zone(ball_x: int) -> Bool {
+    ball_x <= 35
+}
+
+func in_right_zone(ball_x: int) -> Bool {
+    ball_x >= 748
+}
+
+func hit_paddle(ball_y: int, ball_size: int, paddle_y: int, paddle_h: int) -> Bool {
+    if ball_y + ball_size >= paddle_y {
+        if ball_y <= paddle_y + paddle_h {
+            true
+        } else {
+            false
+        }
+    } else {
+        false
+    }
+}
+
+func speed_up(ball_dx: int) -> int {
+    if ball_dx > 0 {
+        if ball_dx < 5 {
+            ball_dx + 1
+        } else {
+            ball_dx
+        }
+    } else {
+        if ball_dx > 0 - 5 {
+            ball_dx - 1
+        } else {
+            ball_dx
+        }
+    }
+}
+
+func scored_left(ball_x: int) -> Bool {
+    ball_x < 0
+}
+
+func scored_right(ball_x: int) -> Bool {
+    ball_x > 800
+}

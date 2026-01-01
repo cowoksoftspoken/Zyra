@@ -34,10 +34,42 @@ pub struct Symbol {
     pub decl_line: usize,
 }
 
+/// Type definition in the type registry
+#[derive(Debug, Clone)]
+pub enum TypeDef {
+    /// Struct type with name and fields
+    Struct {
+        name: String,
+        fields: Vec<(String, ZyraType)>,
+    },
+    /// Enum type with name and variants
+    Enum { name: String, variants: Vec<String> },
+}
+
+impl TypeDef {
+    /// Convert to corresponding ZyraType
+    pub fn to_zyra_type(&self) -> ZyraType {
+        match self {
+            TypeDef::Struct { name, .. } => ZyraType::Struct(name.clone()),
+            TypeDef::Enum { name, .. } => ZyraType::Enum(name.clone()),
+        }
+    }
+}
+
+/// Unique identifier for expressions (for type tracking)
+pub type ExprId = usize;
+
 /// Semantic analyzer
 pub struct SemanticAnalyzer {
     symbols: HashMap<String, Symbol>,
     functions: HashMap<String, FunctionSignature>,
+    /// Type registry: maps type names to their definitions
+    types: HashMap<String, TypeDef>,
+    /// Expression type cache: maps expression IDs to their resolved types
+    /// Used for type-aware features like DCE and compile-time borrow checking
+    expr_types: HashMap<ExprId, ZyraType>,
+    /// Counter for generating unique expression IDs
+    next_expr_id: ExprId,
     ownership: OwnershipChecker,
     lifetime_checker: LifetimeChecker,
     borrow_checker: BorrowChecker,
@@ -66,6 +98,8 @@ pub struct FunctionSignature {
     pub params: Vec<(String, ZyraType)>,
     pub return_type: ZyraType,
     pub lifetimes: Vec<String>,
+    /// True if this is a method with `&mut self` (requires exclusive borrow)
+    pub has_mut_self: bool,
 }
 
 impl SemanticAnalyzer {
@@ -73,6 +107,9 @@ impl SemanticAnalyzer {
         let mut analyzer = Self {
             symbols: HashMap::new(),
             functions: HashMap::new(),
+            types: HashMap::new(),
+            expr_types: HashMap::new(),
+            next_expr_id: 0,
             ownership: OwnershipChecker::new(),
             lifetime_checker: LifetimeChecker::new(),
             borrow_checker: BorrowChecker::new(),
@@ -93,6 +130,43 @@ impl SemanticAnalyzer {
         analyzer
     }
 
+    /// Allocate a new unique expression ID
+    fn alloc_expr_id(&mut self) -> ExprId {
+        let id = self.next_expr_id;
+        self.next_expr_id += 1;
+        id
+    }
+
+    /// Store the resolved type for an expression
+    fn store_expr_type(&mut self, id: ExprId, ty: ZyraType) {
+        self.expr_types.insert(id, ty);
+    }
+
+    /// Get the resolved type for an expression
+    pub fn get_expr_type(&self, id: ExprId) -> Option<&ZyraType> {
+        self.expr_types.get(&id)
+    }
+
+    /// Look up a type definition in the type registry
+    /// Returns Some(TypeDef) if the type exists, None otherwise
+    pub fn lookup_type(&self, name: &str) -> Option<&TypeDef> {
+        self.types.get(name)
+    }
+
+    /// Check if a type name is registered (struct or enum)
+    pub fn is_type_defined(&self, name: &str) -> bool {
+        self.types.contains_key(name)
+    }
+
+    /// Analyze an expression and track its type for later retrieval
+    /// Returns the resolved type and stores it in expr_types cache
+    fn analyze_and_track(&mut self, expr: &Expression) -> ZyraResult<ZyraType> {
+        let expr_id = self.alloc_expr_id();
+        let ty = self.analyze_expression(expr)?;
+        self.store_expr_type(expr_id, ty.clone());
+        Ok(ty)
+    }
+
     fn register_builtins(&mut self) {
         // print function
         self.functions.insert(
@@ -102,6 +176,7 @@ impl SemanticAnalyzer {
                 params: vec![("value".to_string(), ZyraType::Unknown)],
                 return_type: ZyraType::Void,
                 lifetimes: vec![],
+                has_mut_self: false,
             },
         );
 
@@ -113,6 +188,7 @@ impl SemanticAnalyzer {
                 params: vec![("key".to_string(), ZyraType::String)],
                 return_type: ZyraType::Bool,
                 lifetimes: vec![],
+                has_mut_self: false,
             },
         );
 
@@ -129,6 +205,7 @@ impl SemanticAnalyzer {
                 ],
                 return_type: ZyraType::Void,
                 lifetimes: vec![],
+                has_mut_self: false,
             },
         );
 
@@ -144,6 +221,7 @@ impl SemanticAnalyzer {
                 ],
                 return_type: ZyraType::Object(HashMap::new()),
                 lifetimes: vec![],
+                has_mut_self: false,
             },
         );
     }
@@ -374,6 +452,7 @@ impl SemanticAnalyzer {
                     params: param_types,
                     return_type,
                     lifetimes: vec![],
+                    has_mut_self: false,
                 },
             );
 
@@ -592,6 +671,15 @@ impl SemanticAnalyzer {
                     .map(ZyraType::from_ast_type)
                     .unwrap_or(ZyraType::Void);
 
+                // Detect &mut self: first param named "self" with mutable reference type
+                let has_mut_self = params.first().map_or(false, |first_param| {
+                    first_param.name == "self"
+                        && matches!(
+                            &first_param.param_type,
+                            crate::parser::ast::Type::Reference { mutable: true, .. }
+                        )
+                });
+
                 self.functions.insert(
                     name.clone(),
                     FunctionSignature {
@@ -599,6 +687,7 @@ impl SemanticAnalyzer {
                         params: param_types,
                         return_type: ret_type,
                         lifetimes: lifetimes.clone(),
+                        has_mut_self,
                     },
                 );
             }
@@ -799,7 +888,7 @@ impl SemanticAnalyzer {
                         normalized_name.clone(),
                         Symbol {
                             name: normalized_name.clone(),
-                            symbol_type: param_type,
+                            symbol_type: param_type.clone(),
                             mutable: is_mutable, // &mut self and mut params are mutable
                             scope_depth: self.scope_depth,
                             scope_id: self.scope_stack.current(),
@@ -1296,15 +1385,41 @@ impl SemanticAnalyzer {
                 span,
             } => {
                 // Get function name from callee
-                let func_name = match callee.as_ref() {
-                    Expression::Identifier { name, .. } => name.clone(),
+                // For method calls (obj.method), we use the RECEIVER TYPE name, not variable name
+                // Also track receiver variable for &mut self borrow checking
+                let (func_name, receiver_var_for_borrow) = match callee.as_ref() {
+                    Expression::Identifier { name, .. } => (name.clone(), None),
                     Expression::FieldAccess { object, field, .. } => {
-                        if let Expression::Identifier { name, .. } = object.as_ref() {
-                            format!("{}::{}", name, field)
-                        } else {
-                            // Method call on expression
-                            field.clone()
-                        }
+                        // Analyze the object to get its type and track it
+                        let receiver_type = self.analyze_and_track(object)?;
+
+                        // Extract receiver variable name for borrow checking
+                        let receiver_var: Option<String> =
+                            if let Expression::Identifier { name, .. } = object.as_ref() {
+                                Some(name.clone())
+                            } else {
+                                None
+                            };
+
+                        // Use the type name for method resolution (enables type-aware DCE)
+                        let func_name = match &receiver_type {
+                            ZyraType::Struct(type_name) => {
+                                format!("{}::{}", type_name, field)
+                            }
+                            ZyraType::Enum(type_name) => {
+                                format!("{}::{}", type_name, field)
+                            }
+                            _ => {
+                                // Static call or unknown type - try variable name as Type name
+                                if let Expression::Identifier { name, .. } = object.as_ref() {
+                                    format!("{}::{}", name, field)
+                                } else {
+                                    // Method call on complex expression
+                                    field.clone()
+                                }
+                            }
+                        };
+                        (func_name, receiver_var)
                     }
                     _ => return Ok(ZyraType::Unknown),
                 };
@@ -1334,7 +1449,18 @@ impl SemanticAnalyzer {
                 }
 
                 // Look up function signature
-                if let Some(sig) = self.functions.get(&func_name) {
+                // Try full name first (e.g., "paddle::move_up"), then short name (e.g., "move_up")
+                let sig_option = self.functions.get(&func_name).or_else(|| {
+                    // If prefixed lookup fails, try just the function name (after ::)
+                    if let Some(idx) = func_name.rfind("::") {
+                        let short_name = &func_name[idx + 2..];
+                        self.functions.get(short_name)
+                    } else {
+                        None
+                    }
+                });
+
+                if let Some(sig) = sig_option {
                     if arguments.len() != sig.params.len() {
                         return Err(ZyraError::type_error(
                             &format!(
@@ -1345,6 +1471,27 @@ impl SemanticAnalyzer {
                             ),
                             Some(SourceLocation::new("", span.line, span.column)),
                         ));
+                    }
+
+                    // *** COMPILE-TIME BORROW CHECK FOR &mut self ***
+                    // If this is a method with &mut self, ensure the receiver can be mutably borrowed
+                    if sig.has_mut_self {
+                        if let Some(ref receiver_var) = receiver_var_for_borrow {
+                            // Check if receiver can be mutably borrowed (no active borrows)
+                            if let Err(borrow_err) = self.borrow_checker.borrow_mutable(
+                                receiver_var,
+                                &format!("&mut self in {}", func_name),
+                                span.line,
+                            ) {
+                                return Err(ZyraError::ownership_error(
+                                    &format!(
+                                        "Cannot call method '{}' requiring &mut self: {}",
+                                        func_name, borrow_err
+                                    ),
+                                    Some(SourceLocation::new("", span.line, span.column)),
+                                ));
+                            }
+                        }
                     }
 
                     // Check each argument type matches parameter type

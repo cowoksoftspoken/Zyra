@@ -1,0 +1,111 @@
+// paddle.zr - Paddle struct with OOP implementation
+// Tests struct, impl, and method calls
+
+import std::game;
+
+struct Paddle {
+    y: int,
+    speed: int,
+    height: int,
+}
+
+impl Paddle {
+    // Create a new paddle
+    func new(y: int, speed: int) -> Paddle {
+        Paddle {
+            y: y,
+            speed: speed,
+            height: 100,
+        }
+    }
+    
+    // Move paddle up with boundary check
+    func move_up(mut self) {
+        self.y = self.y - self.speed;
+        if self.y < 0 {
+            self.y = 0;
+        }
+    }
+    
+    // Move paddle down with boundary check
+    func move_down(mut self) {
+        self.y = self.y + self.speed;
+        if self.y > 500 {
+            self.y = 500;
+        }
+    }
+    
+    // Handle player input (W/S keys)
+    func handle_input(mut self) {
+        if key_pressed("W") {
+            self.move_up();
+        }
+        if key_pressed("S") {
+            self.move_down();
+        }
+    }
+    
+    // AI update - follow ball
+    func update_ai(mut self, ball_y: int) {
+        let paddle_center = self.y + 50;
+        let ball_center = ball_y + 7;
+        
+        if paddle_center < ball_center - 20 {
+            self.move_down();
+        }
+        if paddle_center > ball_center + 20 {
+            self.move_up();
+        }
+    }
+    
+    // Get Y position
+    func get_y(self) -> int {
+        self.y
+    }
+}
+
+// Legacy functions for backwards compatibility
+func move_up(paddle_y: int, speed: int) -> int {
+    let new_y = paddle_y - speed;
+    if new_y < 0 {
+        0
+    } else {
+        new_y
+    }
+}
+
+func move_down(paddle_y: int, speed: int) -> int {
+    let new_y = paddle_y + speed;
+    if new_y > 500 {
+        500
+    } else {
+        new_y
+    }
+}
+
+func update_player1(paddle_y: int, speed: int) -> int {
+    if key_pressed("W") {
+        paddle::move_up(paddle_y, speed)
+    } else {
+        if key_pressed("S") {
+            paddle::move_down(paddle_y, speed)
+        } else {
+            paddle_y
+        }
+    }
+}
+
+func update_ai(paddle_y: int, ball_y: int, ai_speed: int) -> int {
+    let paddle_center = paddle_y + 50;
+    let ball_center = ball_y + 7;
+    
+    if paddle_center < ball_center - 20 {
+        paddle::move_down(paddle_y, ai_speed)
+    } else {
+        if paddle_center > ball_center + 20 {
+            paddle::move_up(paddle_y, ai_speed)
+        } else {
+            paddle_y
+        }
+    }
+}

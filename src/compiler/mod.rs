@@ -8,12 +8,15 @@ pub use bytecode::{Bytecode, FunctionDef, Instruction, Value, WindowState};
 
 use crate::error::{ZyraError, ZyraResult};
 use crate::parser::ast::*;
+use std::collections::HashSet;
 
 /// Bytecode compiler
 pub struct Compiler {
     bytecode: Bytecode,
     loop_starts: Vec<usize>,
     loop_ends: Vec<Vec<usize>>,
+    /// Tracks which methods/functions are actually called (for dead code elimination)
+    used_methods: HashSet<String>,
 }
 
 impl Compiler {
@@ -22,11 +25,15 @@ impl Compiler {
             bytecode: Bytecode::new(),
             loop_starts: Vec::new(),
             loop_ends: Vec::new(),
+            used_methods: HashSet::new(),
         }
     }
 
     /// Compile a program to bytecode
     pub fn compile(&mut self, program: &Program) -> ZyraResult<Bytecode> {
+        // Pass 0: Collect used method/function names for dead code elimination
+        self.collect_used_methods(&program.statements);
+
         // First pass: compile function definitions
         for stmt in &program.statements {
             if let Statement::Function {
@@ -53,6 +60,171 @@ impl Compiler {
         self.bytecode.emit(Instruction::Halt);
 
         Ok(self.bytecode.clone())
+    }
+
+    /// Collect all used method/function names from the AST (for dead code elimination)
+    fn collect_used_methods(&mut self, statements: &[Statement]) {
+        for stmt in statements {
+            self.collect_from_statement(stmt);
+        }
+    }
+
+    fn collect_from_statement(&mut self, stmt: &Statement) {
+        match stmt {
+            Statement::Let { value, .. } => self.collect_from_expression(value),
+            Statement::Function { body, .. } => {
+                for s in &body.statements {
+                    self.collect_from_statement(s);
+                }
+                if let Some(expr) = &body.expression {
+                    self.collect_from_expression(expr);
+                }
+            }
+            Statement::Expression { expr, .. } => self.collect_from_expression(expr),
+            Statement::Return { value, .. } => {
+                if let Some(expr) = value {
+                    self.collect_from_expression(expr);
+                }
+            }
+            Statement::If {
+                condition,
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.collect_from_expression(condition);
+                for s in &then_block.statements {
+                    self.collect_from_statement(s);
+                }
+                if let Some(expr) = &then_block.expression {
+                    self.collect_from_expression(expr);
+                }
+                if let Some(else_blk) = else_block {
+                    for s in &else_blk.statements {
+                        self.collect_from_statement(s);
+                    }
+                    if let Some(expr) = &else_blk.expression {
+                        self.collect_from_expression(expr);
+                    }
+                }
+            }
+            Statement::While {
+                condition, body, ..
+            }
+            | Statement::For {
+                start: condition,
+                body,
+                ..
+            } => {
+                self.collect_from_expression(condition);
+                for s in &body.statements {
+                    self.collect_from_statement(s);
+                }
+                if let Some(expr) = &body.expression {
+                    self.collect_from_expression(expr);
+                }
+            }
+            Statement::Impl { methods, .. } => {
+                for method in methods {
+                    self.collect_from_statement(method);
+                }
+            }
+            Statement::Block(block) => {
+                for s in &block.statements {
+                    self.collect_from_statement(s);
+                }
+                if let Some(expr) = &block.expression {
+                    self.collect_from_expression(expr);
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn collect_from_expression(&mut self, expr: &Expression) {
+        match expr {
+            // Function call: func_name(...) or object.method(...)
+            Expression::Call {
+                callee, arguments, ..
+            } => {
+                // Extract function/method name from callee
+                if let Expression::Identifier { name, .. } = callee.as_ref() {
+                    self.used_methods.insert(name.clone());
+                } else if let Expression::FieldAccess { object, field, .. } = callee.as_ref() {
+                    // Could be either:
+                    // 1. Static method call: Type::method (object is type identifier)
+                    // 2. Instance method call: obj.method() (object is variable)
+                    // We record both the full name AND just the method name to be safe
+                    if let Expression::Identifier { name, .. } = object.as_ref() {
+                        let method_name = format!("{}::{}", name, field);
+                        self.used_methods.insert(method_name);
+                    }
+                    // Also record just the method name (for instance method calls)
+                    self.used_methods.insert(field.clone());
+                    // Recurse into the object
+                    self.collect_from_expression(object);
+                }
+                // Recurse into arguments
+                for arg in arguments {
+                    self.collect_from_expression(arg);
+                }
+            }
+
+            Expression::Binary { left, right, .. } => {
+                self.collect_from_expression(left);
+                self.collect_from_expression(right);
+            }
+            Expression::Unary { operand, .. } => {
+                self.collect_from_expression(operand);
+            }
+            Expression::Assignment { value, .. } => {
+                self.collect_from_expression(value);
+            }
+            Expression::If {
+                condition,
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.collect_from_expression(condition);
+                for s in &then_block.statements {
+                    self.collect_from_statement(s);
+                }
+                if let Some(expr) = &then_block.expression {
+                    self.collect_from_expression(expr);
+                }
+                if let Some(else_blk) = else_block {
+                    for s in &else_blk.statements {
+                        self.collect_from_statement(s);
+                    }
+                    if let Some(expr) = &else_blk.expression {
+                        self.collect_from_expression(expr);
+                    }
+                }
+            }
+
+            Expression::Object { fields, .. } => {
+                for (_, field_expr) in fields {
+                    self.collect_from_expression(field_expr);
+                }
+            }
+            Expression::List { elements, .. } => {
+                for elem in elements {
+                    self.collect_from_expression(elem);
+                }
+            }
+            Expression::Index { object, index, .. } => {
+                self.collect_from_expression(object);
+                self.collect_from_expression(index);
+            }
+            Expression::FieldAccess { object, .. } => {
+                self.collect_from_expression(object);
+            }
+            Expression::Reference { value, .. } | Expression::Dereference { value, .. } => {
+                self.collect_from_expression(value);
+            }
+            _ => {}
+        }
     }
 
     fn compile_function(
@@ -302,6 +474,7 @@ impl Compiler {
 
             Statement::Impl {
                 target_type,
+                trait_name,
                 methods,
                 ..
             } => {
@@ -312,9 +485,39 @@ impl Compiler {
                         name, params, body, ..
                     } = method.as_ref()
                     {
-                        // Compile as target_type::method_name
-                        let prefixed_name = format!("{}::{}", target_type, name);
-                        self.compile_function(&prefixed_name, params, body)?;
+                        // Generate method name based on impl type:
+                        // - impl Type { method }         -> Type::method
+                        // - impl Trait for Type { method } -> <Trait as Type>::method
+                        let prefixed_name = if let Some(trait_n) = trait_name {
+                            // Trait impl: use <TraitName as Type>::method format
+                            format!("<{} as {}>::{}", trait_n, target_type, name)
+                        } else {
+                            // Inherent impl: use Type::method format
+                            format!("{}::{}", target_type, name)
+                        };
+
+                        // Dead Code Elimination: Skip compiling if method is not used
+                        // Conservative approach for VM trait fallback safety:
+                        // - For inherent impls: check Type::method format
+                        // - For trait impls: include if EITHER:
+                        //   1. Exact trait name is used (<Trait as Type>::method)
+                        //   2. Method name only is used (e.g., "update")
+                        //   3. Inherent method is used (Type::method) - VM fallback may resolve to trait
+                        let inherent_method_name = format!("{}::{}", target_type, name);
+                        let is_used = self.used_methods.contains(&prefixed_name)
+                            || self.used_methods.contains(name)
+                            || self.used_methods.contains(&inherent_method_name)
+                            // For trait impls, also check if any variant is called
+                            || (trait_name.is_some() && self.used_methods.iter().any(|m| {
+                                // Check if any used method ends with ::methodname for this type
+                                m.ends_with(&format!("::{}", name)) && 
+                                (m.contains(target_type) || m.starts_with('<'))
+                            }));
+
+                        if is_used {
+                            self.compile_function(&prefixed_name, params, body)?;
+                        }
+                        // If not used, skip compilation (dead code elimination)
                     } else {
                         self.compile_statement(method)?;
                     }
