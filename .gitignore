@@ -7,6 +7,7 @@ target/
 
 # Ignore documentation
 doc/
+examples/
 
 
 # Ignore tests

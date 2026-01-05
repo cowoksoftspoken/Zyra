@@ -6,7 +6,6 @@
 // - Mathematical operations
 
 
-// ===== Physics Calculator Functions =====
 
 // Calculate kinetic energy: E = 0.5 * m * v^2
 func kinetic_energy(mass: f32, velocity: f32) -> f32 {
@@ -53,7 +52,6 @@ func centripetal_force(mass: f32, velocity: f32, radius: f32) -> f32 {
     return mass * velocity * velocity / radius;
 }
 
-// ===== Main Entry Point =====
 func main() {
     println("==========================================");
     println("     ZYRA PHYSICS CALCULATOR");
@@ -78,7 +76,6 @@ func main() {
     println("  Gravity: ${gravity} m/s2");
     println("");
     
-    // Calculate and display results
     println("[ Calculations ]");
     
     let ke = kinetic_energy(mass, velocity);

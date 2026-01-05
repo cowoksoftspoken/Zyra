@@ -205,3 +205,206 @@ pub fn display() {
         state.borrow_mut().display();
     })
 }
+
+/// Draw a single digit (0-9) using 5x7 pixel font
+/// Returns the width drawn (6 pixels including spacing)
+pub fn draw_digit(x: i64, y: i64, digit: i64, color: u32) {
+    // 5x7 bitmap font for digits 0-9
+    // Each digit is 5 pixels wide, 7 pixels tall
+    let patterns: [[u8; 7]; 10] = [
+        // 0
+        [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        // 1
+        [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        // 2
+        [
+            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
+        ],
+        // 3
+        [
+            0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110,
+        ],
+        // 4
+        [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        // 5
+        [
+            0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110,
+        ],
+        // 6
+        [
+            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        // 7
+        [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        // 8
+        [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        // 9
+        [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100,
+        ],
+    ];
+
+    let d = (digit % 10) as usize;
+    let pattern = patterns[d];
+
+    GAME_STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        for (row, &bits) in pattern.iter().enumerate() {
+            for col in 0..5 {
+                if (bits >> (4 - col)) & 1 == 1 {
+                    let px = x + col as i64;
+                    let py = y + row as i64;
+                    state.draw_rect(px, py, 1, 1, color);
+                }
+            }
+        }
+    });
+}
+
+/// Draw a number (multiple digits) at position
+/// Scale: 1 = 5x7 pixels per digit, 2 = 10x14, etc.
+pub fn draw_number(x: i64, y: i64, num: i64, color: u32, scale: i64) {
+    let num_str = num.abs().to_string();
+    let mut offset = 0i64;
+
+    // Handle negative
+    if num < 0 {
+        // Draw minus sign
+        GAME_STATE.with(|state| {
+            state
+                .borrow_mut()
+                .draw_rect(x, y + 3 * scale, 4 * scale, scale, color);
+        });
+        offset += 6 * scale;
+    }
+
+    for ch in num_str.chars() {
+        if let Some(digit) = ch.to_digit(10) {
+            draw_digit_scaled(x + offset, y, digit as i64, color, scale);
+            offset += 6 * scale;
+        }
+    }
+}
+
+/// Draw a scaled digit
+fn draw_digit_scaled(x: i64, y: i64, digit: i64, color: u32, scale: i64) {
+    let patterns: [[u8; 7]; 10] = [
+        [
+            0b01110, 0b10001, 0b10011, 0b10101, 0b11001, 0b10001, 0b01110,
+        ],
+        [
+            0b00100, 0b01100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+        ],
+        [
+            0b01110, 0b10001, 0b00001, 0b00110, 0b01000, 0b10000, 0b11111,
+        ],
+        [
+            0b01110, 0b10001, 0b00001, 0b00110, 0b00001, 0b10001, 0b01110,
+        ],
+        [
+            0b00010, 0b00110, 0b01010, 0b10010, 0b11111, 0b00010, 0b00010,
+        ],
+        [
+            0b11111, 0b10000, 0b11110, 0b00001, 0b00001, 0b10001, 0b01110,
+        ],
+        [
+            0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110,
+        ],
+        [
+            0b11111, 0b00001, 0b00010, 0b00100, 0b01000, 0b01000, 0b01000,
+        ],
+        [
+            0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110,
+        ],
+        [
+            0b01110, 0b10001, 0b10001, 0b01111, 0b00001, 0b00010, 0b01100,
+        ],
+    ];
+
+    let d = (digit % 10) as usize;
+    let pattern = patterns[d];
+
+    GAME_STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        for (row, &bits) in pattern.iter().enumerate() {
+            for col in 0..5 {
+                if (bits >> (4 - col)) & 1 == 1 {
+                    let px = x + col as i64 * scale;
+                    let py = y + row as i64 * scale;
+                    state.draw_rect(px, py, scale, scale, color);
+                }
+            }
+        }
+    });
+}
+
+/// Draw text "WIN" at position (for victory screen)
+pub fn draw_text_win(x: i64, y: i64, color: u32, scale: i64) {
+    // W pattern
+    let w_pattern: [u8; 7] = [
+        0b10001, 0b10001, 0b10001, 0b10101, 0b10101, 0b11011, 0b10001,
+    ];
+    // I pattern
+    let i_pattern: [u8; 7] = [
+        0b01110, 0b00100, 0b00100, 0b00100, 0b00100, 0b00100, 0b01110,
+    ];
+    // N pattern
+    let n_pattern: [u8; 7] = [
+        0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001,
+    ];
+
+    draw_char_pattern(x, y, &w_pattern, color, scale);
+    draw_char_pattern(x + 6 * scale, y, &i_pattern, color, scale);
+    draw_char_pattern(x + 12 * scale, y, &n_pattern, color, scale);
+}
+
+/// Draw text "LOSE" at position
+pub fn draw_text_lose(x: i64, y: i64, color: u32, scale: i64) {
+    // L pattern
+    let l_pattern: [u8; 7] = [
+        0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b10000, 0b11111,
+    ];
+    // O pattern
+    let o_pattern: [u8; 7] = [
+        0b01110, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110,
+    ];
+    // S pattern
+    let s_pattern: [u8; 7] = [
+        0b01110, 0b10001, 0b10000, 0b01110, 0b00001, 0b10001, 0b01110,
+    ];
+    // E pattern
+    let e_pattern: [u8; 7] = [
+        0b11111, 0b10000, 0b10000, 0b11110, 0b10000, 0b10000, 0b11111,
+    ];
+
+    draw_char_pattern(x, y, &l_pattern, color, scale);
+    draw_char_pattern(x + 6 * scale, y, &o_pattern, color, scale);
+    draw_char_pattern(x + 12 * scale, y, &s_pattern, color, scale);
+    draw_char_pattern(x + 18 * scale, y, &e_pattern, color, scale);
+}
+
+/// Helper to draw a character pattern
+fn draw_char_pattern(x: i64, y: i64, pattern: &[u8; 7], color: u32, scale: i64) {
+    GAME_STATE.with(|state| {
+        let mut state = state.borrow_mut();
+        for (row, &bits) in pattern.iter().enumerate() {
+            for col in 0..5 {
+                if (bits >> (4 - col)) & 1 == 1 {
+                    let px = x + col as i64 * scale;
+                    let py = y + row as i64 * scale;
+                    state.draw_rect(px, py, scale, scale, color);
+                }
+            }
+        }
+    });
+}

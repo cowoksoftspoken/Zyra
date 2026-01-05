@@ -65,6 +65,11 @@ pub enum ZyraType {
     Struct(String),
     /// User-defined enum type
     Enum(String),
+    /// Closure type with captured variables
+    Closure {
+        params: Vec<ZyraType>,
+        return_type: Box<ZyraType>,
+    },
 
     Void,
     Never,
@@ -78,7 +83,7 @@ impl ZyraType {
             ast::Type::I8 => ZyraType::I8,
             ast::Type::I32 => ZyraType::I32,
             ast::Type::I64 => ZyraType::I64,
-            ast::Type::Int => ZyraType::I32, // Alias Int -> i32
+            ast::Type::Int => ZyraType::I32, // Alias Int -> i32 (32-bit default for memory efficiency)
 
             // Unsigned
             ast::Type::U8 => ZyraType::U8,
@@ -88,7 +93,7 @@ impl ZyraType {
             // Floats
             ast::Type::F32 => ZyraType::F32,
             ast::Type::F64 => ZyraType::F64,
-            ast::Type::Float => ZyraType::F32, // Alias Float -> f32
+            ast::Type::Float => ZyraType::F32, // Alias Float -> f32 (32-bit default for memory efficiency)
 
             // Primitives
             ast::Type::Char => ZyraType::Char,
@@ -132,7 +137,7 @@ impl ZyraType {
     pub fn resolve_type_name(name: &str) -> ZyraType {
         match name {
             // Signed integers (lowercase and explicit)
-            "int" | "Int" => ZyraType::I32,
+            "int" | "Int" => ZyraType::I32, // Int is 32-bit by default (memory efficient)
             "i8" | "I8" => ZyraType::I8,
             "i32" | "I32" => ZyraType::I32,
             "i64" | "I64" => ZyraType::I64,
@@ -143,7 +148,7 @@ impl ZyraType {
             "u64" | "U64" => ZyraType::U64,
 
             // Floating point (lowercase and explicit)
-            "float" | "Float" => ZyraType::F32,
+            "float" | "Float" => ZyraType::F32, // Float is 32-bit by default (memory efficient)
             "f32" | "F32" => ZyraType::F32,
             "f64" | "F64" => ZyraType::F64,
 
@@ -248,22 +253,29 @@ impl ZyraType {
             (ZyraType::F32, ZyraType::F32) => true,
             (ZyraType::F64, ZyraType::F64) => true,
 
-            // Safe Widening (Target <- Source)
+            // Implicit widening: smaller types can coerce to larger types
+            // Integer widening: i8 → i32 → i64, u8 → u32 → u64
+            (ZyraType::I8, ZyraType::I32) => true,
+            (ZyraType::I8, ZyraType::I64) => true,
+            (ZyraType::I32, ZyraType::I64) => true,
+            (ZyraType::U8, ZyraType::U32) => true,
+            (ZyraType::U8, ZyraType::U64) => true,
+            (ZyraType::U32, ZyraType::U64) => true,
+
+            // Float widening: f32 → f64
+            (ZyraType::F32, ZyraType::F64) => true,
+
+            // Implicit narrowing: larger types can coerce to smaller (may lose precision)
+            // Integer narrowing: i64 → i32 → i8, u64 → u32 → u8
             (ZyraType::I64, ZyraType::I32) => true,
             (ZyraType::I64, ZyraType::I8) => true,
             (ZyraType::I32, ZyraType::I8) => true,
-
-            (ZyraType::I64, ZyraType::U32) => true, // u32 fits in i64
-            (ZyraType::I64, ZyraType::U8) => true,
-            (ZyraType::I32, ZyraType::U8) => true,
-
             (ZyraType::U64, ZyraType::U32) => true,
             (ZyraType::U64, ZyraType::U8) => true,
             (ZyraType::U32, ZyraType::U8) => true,
 
+            // Float narrowing: f64 → f32
             (ZyraType::F64, ZyraType::F32) => true,
-            (ZyraType::F64, ZyraType::I64) => true, // Widening: Int -> Float
-            (ZyraType::F64, ZyraType::I32) => true, // Widening: Int -> Float
 
             (ZyraType::Char, ZyraType::Char) => true,
             (ZyraType::Bool, ZyraType::Bool) => true,
@@ -302,6 +314,11 @@ impl ZyraType {
             (ZyraType::Struct(a), ZyraType::Struct(b)) => a == b,
             (ZyraType::Enum(a), ZyraType::Enum(b)) => a == b,
 
+            // Cross-compatibility: user-defined types may be declared as Struct but return Enum
+            // This handles the case where `-> Result` (Struct) is compatible with `Result::Ok(...)` (Enum)
+            (ZyraType::Struct(a), ZyraType::Enum(b)) => a == b,
+            (ZyraType::Enum(a), ZyraType::Struct(b)) => a == b,
+
             // Object types: structural compatibility
             (ZyraType::Object(fields_a), ZyraType::Object(fields_b)) => {
                 // Empty objects are compatible with any object (placeholder semantics)
@@ -309,10 +326,10 @@ impl ZyraType {
                     return true;
                 }
                 // Structural compatibility: all fields in b must be compatible with fields in a
-                fields_b.iter().all(|(key, ty_b)| {
+                fields_b.iter().all(|(key, type_b)| {
                     fields_a
                         .get(key)
-                        .map(|ty_a| ty_a.is_compatible(ty_b))
+                        .map(|type_a| type_a.is_compatible(type_b))
                         .unwrap_or(false)
                 })
             }
@@ -322,6 +339,44 @@ impl ZyraType {
             (ZyraType::RwLock(a), ZyraType::RwLock(b)) => a.is_compatible(b),
             (ZyraType::Channel(a), ZyraType::Channel(b)) => a.is_compatible(b),
 
+            _ => false,
+        }
+    }
+
+    /// Check if this type can be explicitly cast to another type using `as`
+    /// This is more permissive than is_compatible - allows widening, narrowing, float/int conversion
+    pub fn is_castable(&self, target: &ZyraType) -> bool {
+        // Same type - always castable
+        if self == target {
+            return true;
+        }
+
+        // Unknown is always castable (for backwards compat)
+        if matches!(self, ZyraType::Unknown) || matches!(target, ZyraType::Unknown) {
+            return true;
+        }
+
+        match (self, target) {
+            // All numeric types can be cast to each other
+            (from, to) if from.is_numeric() && to.is_numeric() => true,
+
+            // Numeric to String (for display) - future: use ToString trait
+            // For now, don't allow - use format!() instead
+
+            // Char to Int types and vice versa
+            (ZyraType::Char, to) if to.is_numeric() => true,
+            (from, ZyraType::Char) if from.is_numeric() => true,
+
+            // Bool to Int (true=1, false=0)
+            (ZyraType::Bool, to) if to.is_numeric() => true,
+
+            // User-defined types - same name means castable
+            (ZyraType::Struct(a), ZyraType::Struct(b)) => a == b,
+            (ZyraType::Enum(a), ZyraType::Enum(b)) => a == b,
+            (ZyraType::Struct(a), ZyraType::Enum(b)) => a == b,
+            (ZyraType::Enum(a), ZyraType::Struct(b)) => a == b,
+
+            // All other casts are not allowed
             _ => false,
         }
     }
@@ -387,6 +442,17 @@ impl ZyraType {
             ZyraType::Channel(inner) => format!("Channel<{}>", inner.display_name()),
             ZyraType::Struct(name) => name.clone(),
             ZyraType::Enum(name) => name.clone(),
+            ZyraType::Closure {
+                params,
+                return_type,
+            } => {
+                let params_str = params
+                    .iter()
+                    .map(|p| p.display_name())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("|{}| -> {}", params_str, return_type.display_name())
+            }
             ZyraType::Void => "Void".to_string(),
             ZyraType::Never => "Never".to_string(),
             ZyraType::Unknown => "Unknown".to_string(),

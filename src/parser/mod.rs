@@ -302,18 +302,14 @@ impl Parser {
 
         // Parse namespace path: std::game::specific
         let mut path = vec![self.expect_identifier("Expected module name after 'import'")?];
+        let mut items = Vec::new();
 
         while self.check(&TokenKind::ColonColon) {
             self.advance(); // consume ::
-            path.push(self.expect_identifier("Expected identifier after '::'")?);
-        }
 
-        // Check for specific imports: ::{Item1, Item2}
-        let items = if self.check(&TokenKind::ColonColon) {
-            self.advance(); // consume ::
             if self.check(&TokenKind::LeftBrace) {
+                // Specific imports: ::{Item1, Item2}
                 self.advance(); // consume {
-                let mut items = Vec::new();
 
                 if !self.check(&TokenKind::RightBrace) {
                     items.push(self.expect_identifier("Expected import item")?);
@@ -328,19 +324,14 @@ impl Parser {
                 }
 
                 self.expect(&TokenKind::RightBrace, "Expected '}' after import items")?;
-                items
-            } else {
-                // Single item after ::
-                vec![self.expect_identifier("Expected import item after '::'")?]
+                break; // End of import parsing
             }
-        } else {
-            Vec::new() // Import entire module
-        };
 
-        // Semicolon is optional
-        if self.check(&TokenKind::Semicolon) {
-            self.advance();
+            path.push(self.expect_identifier("Expected identifier after '::'")?);
         }
+
+        // Semicolon is required
+        self.expect(&TokenKind::Semicolon, "Expected ';' after import statement")?;
 
         let span = Span::new(
             start_span.start,
@@ -380,8 +371,26 @@ impl Parser {
         let then_block = self.parse_block()?;
 
         let else_block = if self.check(&TokenKind::Else) {
-            self.advance();
-            Some(self.parse_block()?)
+            self.advance(); // consume 'else'
+
+            // Check for 'else if' - parse as chained if statement
+            if self.check(&TokenKind::If) {
+                // Recursively parse the if statement and wrap it in a block
+                let else_if_stmt = self.parse_if()?;
+                // Extract span from the Statement::If
+                let else_if_span = match &else_if_stmt {
+                    Statement::If { span, .. } => *span,
+                    _ => self.previous().span, // fallback (shouldn't happen)
+                };
+                Some(Block {
+                    statements: vec![else_if_stmt],
+                    expression: None,
+                    span: else_if_span,
+                })
+            } else {
+                // Regular else block
+                Some(self.parse_block()?)
+            }
         } else {
             None
         };
@@ -904,8 +913,33 @@ impl Parser {
                     span,
                 })
             }
-            _ => self.parse_call(),
+            _ => self.parse_cast(),
         }
+    }
+
+    /// Parse cast expressions: expr as Type
+    /// Cast binds tighter than binary operators but looser than unary
+    fn parse_cast(&mut self) -> ZyraResult<Expression> {
+        let mut expr = self.parse_call()?;
+
+        // Handle multiple casts: a as i32 as i64
+        while self.check(&TokenKind::As) {
+            self.advance(); // consume 'as'
+            let target_type = self.parse_type()?;
+            let span = Span::new(
+                expr.span().start,
+                self.previous().span.end,
+                expr.span().line,
+                expr.span().column,
+            );
+            expr = Expression::Cast {
+                expr: Box::new(expr),
+                target_type,
+                span,
+            };
+        }
+
+        Ok(expr)
     }
 
     fn parse_call(&mut self) -> ZyraResult<Expression> {
@@ -1001,6 +1035,27 @@ impl Parser {
             TokenKind::Char(value) => Ok(Expression::Char { value, span }),
             TokenKind::String(value) => Ok(Expression::String { value, span }),
 
+            // Closure: |params| body
+            TokenKind::Pipe => self.parse_closure_body(span, CaptureMode::Borrow),
+
+            // Move closure: move |params| body
+            TokenKind::Move => {
+                // Check if next is || (empty move closure) or | (params follow)
+                if self.check(&TokenKind::Or) {
+                    self.advance(); // consume ||
+                    self.parse_closure_body_after_params(span, CaptureMode::Move, Vec::new())
+                } else {
+                    self.expect(&TokenKind::Pipe, "Expected '|' after 'move'")?;
+                    self.parse_closure_body(span, CaptureMode::Move)
+                }
+            }
+
+            // Empty closure: || body (lexer produces Or token for ||)
+            TokenKind::Or => {
+                // || is an empty closure (no params)
+                self.parse_closure_body_after_params(span, CaptureMode::Borrow, Vec::new())
+            }
+
             TokenKind::FormatString(parts) => {
                 let mut parts_iter = parts.into_iter();
 
@@ -1050,6 +1105,30 @@ impl Parser {
             }
 
             TokenKind::Identifier(name) => {
+                // Check for vec literal: vec[1, 2, 3]
+                if name == "vec" && self.check(&TokenKind::LeftBracket) {
+                    self.advance(); // Consume [
+                    let mut elements = Vec::new();
+
+                    if !self.check(&TokenKind::RightBracket) {
+                        loop {
+                            elements.push(self.parse_expression()?);
+                            if !self.check(&TokenKind::Comma) {
+                                break;
+                            }
+                            self.advance();
+                        }
+                    }
+
+                    self.expect(&TokenKind::RightBracket, "Expected ']' after vec elements")?;
+
+                    let end_span = self.previous().span;
+                    let span = Span::new(span.start, end_span.end, span.line, span.column);
+
+                    // Return as VecLiteral (we'll add this to AST, or use a marker)
+                    return Ok(Expression::VecLiteral { elements, span });
+                }
+
                 // Check for qualified path (module::function or module::StructName)
                 let mut full_path = name;
                 while self.check(&TokenKind::ColonColon) {
@@ -1143,32 +1222,42 @@ impl Parser {
                         span,
                     })
                 } else {
-                    // Check if this looks like an enum variant: EnumName::Variant
-                    // (contains :: and not followed by parentheses)
-                    if full_path.contains("::") && !self.check(&TokenKind::LeftParen) {
-                        // Parse as enum variant
+                    // Check if this looks like an enum variant: EnumName::Variant or EnumName::Variant(data)
+                    // Enum variants use PascalCase (start with uppercase), functions use snake_case
+                    if full_path.contains("::") {
                         let parts: Vec<&str> = full_path.rsplitn(2, "::").collect();
                         if parts.len() == 2 {
                             let variant = parts[0].to_string();
                             let enum_name = parts[1].to_string();
-                            // Check for variant data: EnumName::Variant(data)
-                            let data = if self.check(&TokenKind::LeftParen) {
-                                self.advance(); // consume (
-                                let expr = self.parse_expression()?;
-                                self.expect(
-                                    &TokenKind::RightParen,
-                                    "Expected ')' after enum variant data",
-                                )?;
-                                Some(Box::new(expr))
-                            } else {
-                                None
-                            };
-                            return Ok(Expression::EnumVariant {
-                                enum_name,
-                                variant,
-                                data,
-                                span,
-                            });
+
+                            // Only treat as enum variant if the variant name starts with uppercase
+                            // This distinguishes EnumName::Variant from module::function
+                            let is_variant = variant
+                                .chars()
+                                .next()
+                                .map(|c| c.is_uppercase())
+                                .unwrap_or(false);
+
+                            if is_variant {
+                                // Check for variant data: EnumName::Variant(data)
+                                let data = if self.check(&TokenKind::LeftParen) {
+                                    self.advance(); // consume (
+                                    let expr = self.parse_expression()?;
+                                    self.expect(
+                                        &TokenKind::RightParen,
+                                        "Expected ')' after enum variant data",
+                                    )?;
+                                    Some(Box::new(expr))
+                                } else {
+                                    None
+                                };
+                                return Ok(Expression::EnumVariant {
+                                    enum_name,
+                                    variant,
+                                    data,
+                                    span,
+                                });
+                            }
                         }
                     }
                     Ok(Expression::Identifier {
@@ -1218,7 +1307,337 @@ impl Parser {
                 Ok(Expression::List { elements, span })
             }
 
+            // Match expression: match expr { pattern => body, ... }
+            TokenKind::Match => {
+                let scrutinee = Box::new(self.parse_expression()?);
+                self.expect(&TokenKind::LeftBrace, "Expected '{' after match expression")?;
+
+                let mut arms = Vec::new();
+
+                while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+                    let arm = self.parse_match_arm()?;
+                    arms.push(arm);
+
+                    // Optional comma between arms
+                    if self.check(&TokenKind::Comma) {
+                        self.advance();
+                    }
+                }
+
+                self.expect(&TokenKind::RightBrace, "Expected '}' after match arms")?;
+                let end_span = self.previous().span;
+                let span = Span::new(span.start, end_span.end, span.line, span.column);
+
+                Ok(Expression::Match {
+                    scrutinee,
+                    arms,
+                    span,
+                })
+            }
+
             _ => Err(self.error(&format!("Unexpected token: {}", token.kind))),
+        }
+    }
+
+    // ===== Match Expression Parsing =====
+
+    /// Parse a single match arm: pattern [if guard] => body
+    fn parse_match_arm(&mut self) -> ZyraResult<MatchArm> {
+        let arm_span = self.peek().span;
+
+        // Parse pattern
+        let pattern = self.parse_pattern()?;
+
+        // Optional guard: if condition
+        let guard = if self.check(&TokenKind::If) {
+            self.advance(); // consume 'if'
+            Some(Box::new(self.parse_expression()?))
+        } else {
+            None
+        };
+
+        // Expect =>
+        self.expect(&TokenKind::FatArrow, "Expected '=>' after pattern")?;
+
+        // Parse body expression
+        let body = self.parse_expression()?;
+
+        let end_span = self.previous().span;
+        let span = Span::new(arm_span.start, end_span.end, arm_span.line, arm_span.column);
+
+        Ok(MatchArm {
+            pattern,
+            guard,
+            body,
+            span,
+        })
+    }
+
+    /// Parse a pattern
+    fn parse_pattern(&mut self) -> ZyraResult<Pattern> {
+        let token = self.peek().clone();
+        let span = token.span;
+
+        match &token.kind {
+            // Wildcard pattern: _
+            TokenKind::Identifier(name) if name == "_" => {
+                self.advance();
+                Ok(Pattern::Wildcard { span })
+            }
+
+            // Ref binding: ref name
+            TokenKind::Ref => {
+                self.advance(); // consume 'ref'
+                if let TokenKind::Identifier(name) = &self.peek().kind {
+                    let name = name.clone();
+                    let name_span = self.peek().span;
+                    self.advance();
+                    let span = Span::new(span.start, name_span.end, span.line, span.column);
+                    Ok(Pattern::RefBinding { name, span })
+                } else {
+                    Err(self.error("Expected identifier after 'ref'"))
+                }
+            }
+
+            // Literal patterns
+            TokenKind::Int(n) => {
+                let n = *n;
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: LiteralPattern::Int(n),
+                    span,
+                })
+            }
+            TokenKind::Float(f) => {
+                let f = *f;
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: LiteralPattern::Float(f),
+                    span,
+                })
+            }
+            TokenKind::True => {
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: LiteralPattern::Bool(true),
+                    span,
+                })
+            }
+            TokenKind::False => {
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: LiteralPattern::Bool(false),
+                    span,
+                })
+            }
+            TokenKind::Char(c) => {
+                let c = *c;
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: LiteralPattern::Char(c),
+                    span,
+                })
+            }
+            TokenKind::String(s) => {
+                let s = s.clone();
+                self.advance();
+                Ok(Pattern::Literal {
+                    value: LiteralPattern::String(s),
+                    span,
+                })
+            }
+
+            // Tuple pattern: (p1, p2, ...)
+            TokenKind::LeftParen => {
+                self.advance(); // consume '('
+                let mut elements = Vec::new();
+
+                if !self.check(&TokenKind::RightParen) {
+                    loop {
+                        elements.push(self.parse_pattern()?);
+                        if !self.check(&TokenKind::Comma) {
+                            break;
+                        }
+                        self.advance();
+                    }
+                }
+
+                self.expect(&TokenKind::RightParen, "Expected ')' after tuple pattern")?;
+                let end_span = self.previous().span;
+                let span = Span::new(span.start, end_span.end, span.line, span.column);
+
+                Ok(Pattern::Tuple { elements, span })
+            }
+
+            // Identifier, struct, or enum variant pattern
+            TokenKind::Identifier(name) => {
+                let name = name.clone();
+                self.advance();
+
+                // Check for qualified path: EnumName::Variant
+                if self.check(&TokenKind::ColonColon) {
+                    self.advance(); // consume ::
+                    if let TokenKind::Identifier(variant) = &self.peek().kind {
+                        let variant = variant.clone();
+                        self.advance();
+
+                        // Check for inner pattern: Variant(inner)
+                        let inner = if self.check(&TokenKind::LeftParen) {
+                            self.advance();
+                            let inner = self.parse_pattern()?;
+                            self.expect(
+                                &TokenKind::RightParen,
+                                "Expected ')' after variant inner pattern",
+                            )?;
+                            Some(Box::new(inner))
+                        } else {
+                            None
+                        };
+
+                        let end_span = self.previous().span;
+                        let span = Span::new(span.start, end_span.end, span.line, span.column);
+
+                        return Ok(Pattern::Variant {
+                            enum_name: Some(name),
+                            variant,
+                            inner,
+                            span,
+                        });
+                    } else {
+                        return Err(self.error("Expected variant name after '::'"));
+                    }
+                }
+
+                // Check for struct pattern: StructName { field, ... }
+                if self.check(&TokenKind::LeftBrace) {
+                    self.advance(); // consume '{'
+                    let mut fields = Vec::new();
+                    let mut rest = false;
+
+                    while !self.check(&TokenKind::RightBrace) && !self.is_at_end() {
+                        // Check for rest pattern: ..
+                        if self.check(&TokenKind::DotDot) {
+                            self.advance();
+                            rest = true;
+                            break;
+                        }
+
+                        // Parse field pattern
+                        if let TokenKind::Identifier(field_name) = &self.peek().kind {
+                            let field_name = field_name.clone();
+                            let field_span = self.peek().span;
+                            self.advance();
+
+                            // Check for : pattern
+                            let field_pattern = if self.check(&TokenKind::Colon) {
+                                self.advance();
+                                self.parse_pattern()?
+                            } else {
+                                // Shorthand: field means field: field
+                                Pattern::Identifier {
+                                    name: field_name.clone(),
+                                    mutable: false,
+                                    span: field_span,
+                                }
+                            };
+
+                            let field_end_span = self.previous().span;
+                            fields.push(FieldPattern {
+                                field_name,
+                                pattern: field_pattern,
+                                span: Span::new(
+                                    field_span.start,
+                                    field_end_span.end,
+                                    field_span.line,
+                                    field_span.column,
+                                ),
+                            });
+
+                            if self.check(&TokenKind::Comma) {
+                                self.advance();
+                            } else {
+                                break;
+                            }
+                        } else {
+                            return Err(self.error("Expected field name in struct pattern"));
+                        }
+                    }
+
+                    self.expect(&TokenKind::RightBrace, "Expected '}' after struct pattern")?;
+                    let end_span = self.previous().span;
+                    let span = Span::new(span.start, end_span.end, span.line, span.column);
+
+                    return Ok(Pattern::Struct {
+                        type_name: name,
+                        fields,
+                        rest,
+                        span,
+                    });
+                }
+
+                // Check for variant without enum name: Some(inner) or None
+                if self.check(&TokenKind::LeftParen) {
+                    self.advance();
+                    let inner = self.parse_pattern()?;
+                    self.expect(
+                        &TokenKind::RightParen,
+                        "Expected ')' after variant inner pattern",
+                    )?;
+                    let end_span = self.previous().span;
+                    let span = Span::new(span.start, end_span.end, span.line, span.column);
+
+                    return Ok(Pattern::Variant {
+                        enum_name: None,
+                        variant: name,
+                        inner: Some(Box::new(inner)),
+                        span,
+                    });
+                }
+
+                // Check if it looks like a variant (PascalCase without parens)
+                let is_variant = name
+                    .chars()
+                    .next()
+                    .map(|c| c.is_uppercase())
+                    .unwrap_or(false);
+                if is_variant {
+                    // Could be a unit variant like None
+                    return Ok(Pattern::Variant {
+                        enum_name: None,
+                        variant: name,
+                        inner: None,
+                        span,
+                    });
+                }
+
+                // Simple identifier pattern (binding)
+                // Check for mut modifier (already consumed)
+                Ok(Pattern::Identifier {
+                    name,
+                    mutable: false,
+                    span,
+                })
+            }
+
+            // Mutable binding: mut name
+            TokenKind::Mut => {
+                self.advance(); // consume 'mut'
+                if let TokenKind::Identifier(name) = &self.peek().kind {
+                    let name = name.clone();
+                    let name_span = self.peek().span;
+                    self.advance();
+                    let span = Span::new(span.start, name_span.end, span.line, span.column);
+                    Ok(Pattern::Identifier {
+                        name,
+                        mutable: true,
+                        span,
+                    })
+                } else {
+                    Err(self.error("Expected identifier after 'mut'"))
+                }
+            }
+
+            _ => Err(self.error(&format!("Expected pattern, found: {}", token.kind))),
         }
     }
 
@@ -1339,6 +1758,161 @@ impl Parser {
         };
 
         Ok(base)
+    }
+
+    // ===== Closure Parsing =====
+
+    /// Parse closure body after the opening |
+    /// Handles: |params| body or |params| -> Type { body }
+    fn parse_closure_body(
+        &mut self,
+        start_span: Span,
+        capture_mode: CaptureMode,
+    ) -> ZyraResult<Expression> {
+        // Parse parameters (may be empty: ||)
+        let mut params = Vec::new();
+
+        if !self.check(&TokenKind::Pipe) {
+            loop {
+                // Get parameter name
+                let param_span = self.peek().span;
+                let name = self.expect_identifier("Expected closure parameter name")?;
+
+                // Check for optional type annotation
+                let param_type = if self.check(&TokenKind::Colon) {
+                    self.advance(); // consume :
+                    Some(self.parse_type()?)
+                } else {
+                    None
+                };
+
+                params.push(ClosureParam {
+                    name,
+                    param_type,
+                    span: param_span,
+                });
+
+                // Check for comma or end of params
+                if self.check(&TokenKind::Comma) {
+                    self.advance(); // consume comma
+                } else {
+                    break;
+                }
+            }
+        }
+
+        // Expect closing |
+        self.expect(&TokenKind::Pipe, "Expected '|' after closure parameters")?;
+
+        // Check for optional return type annotation: -> Type
+        let return_type = if self.check(&TokenKind::Arrow) {
+            self.advance(); // consume ->
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        // Parse body: either { block } or single expression
+        let body = if self.check(&TokenKind::LeftBrace) {
+            // Block body: { statements; optional_expr }
+            let block = self.parse_block()?;
+            if let Some(expression) = block.expression {
+                *expression
+            } else if !block.statements.is_empty() {
+                // If no trailing expr but has statements, wrap in grouped
+                Expression::Grouped {
+                    inner: Box::new(Expression::Int {
+                        value: 0,
+                        span: start_span,
+                    }), // placeholder
+                    span: start_span,
+                }
+            } else {
+                // Empty block
+                Expression::Int {
+                    value: 0,
+                    span: start_span,
+                }
+            }
+        } else {
+            // Single expression body
+            self.parse_expression()?
+        };
+
+        let end_span = body.span();
+        let span = Span::new(
+            start_span.start,
+            end_span.end,
+            start_span.line,
+            start_span.column,
+        );
+
+        Ok(Expression::Closure {
+            params,
+            return_type,
+            body: Box::new(body),
+            capture_mode,
+            span,
+        })
+    }
+
+    /// Parse closure body when params are already known (for empty closures ||)
+    fn parse_closure_body_after_params(
+        &mut self,
+        start_span: Span,
+        capture_mode: CaptureMode,
+        params: Vec<ClosureParam>,
+    ) -> ZyraResult<Expression> {
+        // Check for optional return type annotation: -> Type
+        let return_type = if self.check(&TokenKind::Arrow) {
+            self.advance(); // consume ->
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
+
+        // Parse body: either { block } or single expression
+        let body = if self.check(&TokenKind::LeftBrace) {
+            // Block body: { statements; optional_expr }
+            let block = self.parse_block()?;
+            if let Some(expression) = block.expression {
+                *expression
+            } else if !block.statements.is_empty() {
+                // If no trailing expr but has statements, wrap in grouped
+                Expression::Grouped {
+                    inner: Box::new(Expression::Int {
+                        value: 0,
+                        span: start_span,
+                    }),
+                    span: start_span,
+                }
+            } else {
+                // Empty block
+                Expression::Int {
+                    value: 0,
+                    span: start_span,
+                }
+            }
+        } else {
+            // Single expression body
+            self.parse_expression()?
+        };
+
+        let end_span = body.span();
+        let span = Span::new(
+            start_span.start,
+            end_span.end,
+            start_span.line,
+            start_span.column,
+        );
+
+        Ok(Expression::Closure {
+            params,
+            return_type,
+            body: Box::new(body),
+            capture_mode,
+            span,
+        })
     }
 
     // ===== Helper Methods =====

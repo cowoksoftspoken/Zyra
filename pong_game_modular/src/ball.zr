@@ -10,7 +10,6 @@ struct Ball {
 }
 
 impl Ball {
-    // Create a new ball at center
     func new() -> Ball {
         Ball {
             x: 392,
@@ -21,43 +20,35 @@ impl Ball {
         }
     }
     
-    // Move ball by velocity
     func update(mut self) {
         self.x = self.x + self.dx;
         self.y = self.y + self.dy;
     }
     
-    // Check top boundary hit
     func hit_top(self) -> Bool {
         self.y <= 0
     }
     
-    // Check bottom boundary hit
     func hit_bottom(self) -> Bool {
         self.y >= 583
     }
     
-    // Bounce vertically
     func bounce_y(mut self) {
         self.dy = 0 - self.dy;
     }
     
-    // Bounce horizontally
     func bounce_x(mut self) {
         self.dx = 0 - self.dx;
     }
     
-    // Check if in left paddle zone
     func in_left_zone(self) -> Bool {
         self.x <= 35
     }
     
-    // Check if in right paddle zone
     func in_right_zone(self) -> Bool {
         self.x >= 748
     }
     
-    // Check if hit paddle
     func hit_paddle(self, paddle_y: int, paddle_h: int) -> Bool {
         if self.y + self.size >= paddle_y {
             if self.y <= paddle_y + paddle_h {
@@ -70,7 +61,6 @@ impl Ball {
         }
     }
     
-    // Speed up ball
     func speed_up(mut self) {
         if self.dx > 0 {
             if self.dx < 5 {
@@ -83,17 +73,14 @@ impl Ball {
         }
     }
     
-    // Check if scored on left
     func scored_left(self) -> Bool {
         self.x < 0
     }
     
-    // Check if scored on right
     func scored_right(self) -> Bool {
         self.x > 800
     }
     
-    // Reset ball to center
     func reset(mut self, direction: int) {
         self.x = 392;
         self.y = 292;
@@ -105,7 +92,6 @@ impl Ball {
         }
     }
     
-    // Fix position after bounce
     func fix_top(mut self) {
         self.y = 1;
     }
@@ -123,7 +109,6 @@ impl Ball {
     }
 }
 
-// Legacy functions for backwards compatibility
 func reset(direction: int) -> int {
     if direction > 0 {
         2

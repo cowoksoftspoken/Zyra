@@ -1,182 +1,146 @@
 # Zyra Programming Language
 
-A modern, safe, and deterministic programming language built in Rust.
+![Zyra Logo](/extensions/ZyraFileIcons/icons/zyra.svg)
 
-![Zyra Demo](demo/pict.png)
+A modern, memory-safe, and deterministic programming language built in Rust.
+
+**Version:** 1.0.0 (Stable Release)
 
 ## Overview
 
-**Zyra** is a programming language designed for students, beginner programmers, and indie game developers who want **Rust-level memory safety** without Rust-level complexity.
+**Zyra** A modern, statically typed and deterministic programming language built in Rust. Zyra combines a custom compiler and lightweight virtual machine with compile-time memory safety via ownership, borrowing, and lifetime checking. This design enables fast, predictable, and garbage-collection-free execution.
 
-Zyra focuses on clarity, safety, and practicality. It is capable of building complete **2D games** using only its standard library, making it suitable for learning language design, compiler construction, and simple game development.
+## Key Features
 
----
-
-## Features
-
-- **Memory Safe**  
-  Rust-inspired ownership, borrowing, and lifetime model with no garbage collector.
-
-- **No Null Values**  
-  Every value has a single owner, preventing null pointer bugs.
-
-- **Type Inference**  
-  Explicit typing is optional; the compiler infers types when possible.
-
-- **Game Ready**  
-  Built-in game module for simple 2D graphics and input.
-
-- **Clean Syntax**  
-  Minimal, readable syntax with explicit semicolons.
-
-- **Human-Readable Errors**  
-  Clear compiler errors with helpful messages and suggestions.
-
----
-
-## File Extensions
-
-Zyra source files support the following extensions:
-
-- `.zr`
-- `.zy`
-- `.za`
+- **🛡️ Memory Safe**: Ownership & Borrowing system prevents data races and segfaults at compile time.
+- **🚀 Zero Cost Abstractions**: Compiles to efficient bytecode for a fast VM execution.
+- **📦 Smart Module System**: Clean namespace management (`import std::game`).
+- **🎮 Game Ready**: Built-in 2D game engine in standard library (Window, Input, Graphics).
+- **🔧 Zero Null**: No null values - Option types used for safety.
+- **🛠️ Project Management**: `zyra.toml` handling for consistent project builds.
 
 ---
 
 ## Quick Start
 
+### 1. Initialize a Project
+
+Create a new project structure with `zyra.toml`:
+
 ```bash
-# Build Zyra
-cargo build --release
-
-# Run a program
-cargo run -- run examples/hello.zr
-
-# Check syntax and types
-cargo run -- check examples/pong.zr
-
-# Compile to bytecode
-cargo run -- build examples/hello.zr
+zyra init my_game
+cd my_game
 ```
+
+### 2. Run
+
+Automatically finds the main entry file defined in `zyra.toml`:
+
+```bash
+zyra run
+```
+
+### 3. Compile
+
+Compiles your code to bytecode (`.zyc`):
+
+```bash
+zyra compile
+```
+
+_Output directory is configurable in `zyra.toml`._
+
+---
+
+## Project Configuration (zyra.toml)
+
+Every Zyra project can have a `zyra.toml` file to manage build settings:
+
+```toml
+[project]
+name = "pong_game"
+version = "1.0.0"
+edition = "2025"
+zyra = ">=1.0.0"
+
+[build]
+main_entry = "main.zr"   # Entry point file
+output = "./dist/"       # Output directory for compiled files
+```
+
+---
 
 ## Syntax Examples
 
-### Variables
+### Variables & Types
 
 ```zyra
-let score = 0;              // Immutable, type inferred
-let mut speed = 3;         // Mutable variable
-let gravity: f32 = 9.8;    // Explicit type
+let score = 0;              // Inferred as int
+let mut speed = 5.5;        // Mutable float
+let name: string = "Zyra";  // Explicit type
 ```
 
-### Functions
+### Functions & Structs
 
 ```zyra
-func add(a: Int, b: Int) -> Int {
-    a + b  // Last expression is return value
+struct Player {
+    name: string,
+    score: int
 }
 
-func longest<'a>(a: &'a String, b: &'a String) -> &'a String {
-    if a.len() > b.len() { a } else { b }
+impl Player {
+    func new(name: string) -> Player {
+        Player { name, score: 0 }
+    }
+
+    func level_up(&mut self) {
+        self.score = self.score + 100;
+    }
 }
 ```
 
-### Control Flow
+### Game Development (Standard Library)
+
+Zyra comes with a built-in game framework:
 
 ```zyra
-if score > 10 {
-    print("High score!");
-} else {
-    print("Keep trying");
-};
-
-for i in 0..5 {
-    print(i);
-};
-
-while running {
-    update();
-};
-```
-
-### Game Development
-
-```zyra
-import game;
+import std::game;
+import std::time;
 
 func main() {
     let win = Window(800, 600, "My Game");
 
-    while win.is_open() {
-        if input.key("W") {
-            // Move up
-        };
+    while game::is_open() {
+        game::clear();
 
-        win.clear();
-        draw.rect(100, 100, 50, 50);
-        win.display();
-    };
-};
+        if game::key_pressed("W") {
+             println("Moving Up!");
+        }
+
+        // Draw entities
+        game::draw_rect(10, 10, 50, 50);
+        game::draw_number(100, 100, 42, 2); // X, Y, Number, Scale
+
+        game::display();
+        time::sleep(16);
+    }
+}
 ```
 
-## Standard Library
+---
 
-### IO Module
+## Standard Library Modules
 
-- `print(value)` - Print to stdout
-- `println(value)` - Print with newline
-- `input()` - Read line from stdin
+- **std::io**: `print`, `println`, `input`
+- **std::math**: `abs`, `min`, `max`, `sqrt`, `random`, `clamp`
+- **std::time**: `now`, `sleep`
+- **std::game**: Window management, primitive drawing, input handling
 
-### Math Module
+---
 
-- `abs(n)`, `min(a, b)`, `max(a, b)`
-- `sqrt(n)`, `pow(base, exp)`
-- `floor(n)`, `ceil(n)`, `round(n)`
-- `sin(n)`, `cos(n)`, `pi()`
-- `random(min, max)`, `clamp(v, min, max)`
+## Installation
 
-### Time Module
-
-- `now()` - Current time in milliseconds
-- `sleep(ms)` - Sleep for milliseconds
-
-### Game Module
-
-- `Window(w, h, title)` - Create window
-- `win.is_open()` - Check if window is open
-- `win.clear()` - Clear screen
-- `win.display()` - Display frame
-- `input.key(name)` - Check key pressed
-- `draw.rect(x, y, w, h)` - Draw rectangle
-
-## Project Structure
-
-```
-Zyra/
-├── Cargo.toml          # Rust project manifest
-├── src/
-│   ├── main.rs         # CLI entry point
-│   ├── lib.rs          # Library root
-│   ├── error.rs        # Error handling
-│   ├── lexer/          # Tokenizer
-│   ├── parser/         # Parser & AST
-│   ├── semantic/       # Type checking & ownership
-│   ├── compiler/       # Bytecode compiler
-│   ├── vm/             # Virtual machine
-│   └── stdlib/         # Standard library
-└── examples/
-    ├── pong.zr         # Complete Pong game
-    ├── hello.zr        # Hello world
-    └── ownership.zr    # Ownership demo
-```
-
-## Building from Source
-
-Requirements:
-
-- Rust 1.70 or later
-- Cargo
+Requirements: Rust 1.70+
 
 ```bash
 git clone https://github.com/cowoksoftspoken/Zyra.git
@@ -184,9 +148,10 @@ cd Zyra
 cargo build --release
 ```
 
-The binary will be at `target/release/zyra`
-some features not work right now.
+The binary is located at `target/release/zyra`.
+
+---
 
 ## License
 
-See [LICENSE](LICENSE) file.
+MIT License. See [LICENSE](LICENSE) for details.

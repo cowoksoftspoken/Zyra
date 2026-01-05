@@ -63,7 +63,8 @@ pub enum Instruction {
     EndBorrow(String),
 
     // Data structures
-    MakeList(usize),   // element count
+    MakeList(usize),   // Array (fixed size): element count
+    MakeVec(usize),    // Vec (dynamic): element count
     MakeObject(usize), // field count
     GetField(String),
     SetField(String),
@@ -80,8 +81,25 @@ pub enum Instruction {
     // No operation
     Nop,
 
+    // Stack operations for pattern matching
+    /// Duplicate the top of stack
+    Dup,
+    /// Check if string contains substring: stack [string, substr] => bool
+    StrContains,
+
     // Halt execution
     Halt,
+
+    // Type casting
+    /// Cast top of stack to target type (type name as string)
+    Cast(String),
+
+    // Closures
+    /// Create a closure: MakeClosure(function_name, param_count)
+    MakeClosure {
+        func_name: String,
+        param_count: usize,
+    },
 }
 
 /// Runtime value
@@ -140,6 +158,12 @@ pub enum Value {
     /// Reference to heap-allocated object (Struct, Enum, Vec, String)
     /// The usize is the HeapId for lookup in the VM's heap
     Ref(usize),
+
+    /// Closure value with function name and captured environment
+    Closure {
+        func_name: String,
+        param_count: usize,
+    },
 }
 
 /// Window state for game module
@@ -180,6 +204,7 @@ impl Value {
             Value::Reference { .. } => "Reference",
             Value::Window(_) => "Window",
             Value::Ref(_) => "Ref",
+            Value::Closure { .. } => "Closure",
         }
     }
 
@@ -258,6 +283,12 @@ impl fmt::Display for Value {
                 )
             }
             Value::Ref(id) => write!(f, "<Ref#{}>", id),
+            Value::Closure {
+                func_name,
+                param_count,
+            } => {
+                write!(f, "<Closure {} ({} params)>", func_name, param_count)
+            }
         }
     }
 }
@@ -417,6 +448,10 @@ impl Bytecode {
                 output.push(0x70);
                 output.extend_from_slice(&(*count as u32).to_le_bytes());
             }
+            Instruction::MakeVec(count) => {
+                output.push(0x76);
+                output.extend_from_slice(&(*count as u32).to_le_bytes());
+            }
             Instruction::MakeObject(count) => {
                 output.push(0x71);
                 output.extend_from_slice(&(*count as u32).to_le_bytes());
@@ -435,7 +470,21 @@ impl Bytecode {
             Instruction::ExitScope => output.push(0x81),
             Instruction::Print => output.push(0x90),
             Instruction::Nop => output.push(0xFE),
+            Instruction::Dup => output.push(0xA0),
+            Instruction::StrContains => output.push(0xA1),
             Instruction::Halt => output.push(0xFF),
+            Instruction::Cast(type_name) => {
+                output.push(0xA2);
+                Self::serialize_string(output, type_name);
+            }
+            Instruction::MakeClosure {
+                func_name,
+                param_count,
+            } => {
+                output.push(0xA3);
+                Self::serialize_string(output, func_name);
+                output.extend_from_slice(&(*param_count as u32).to_le_bytes());
+            }
         }
     }
 
@@ -656,6 +705,18 @@ impl Bytecode {
                 Instruction::Call(name, argc)
             }
             0x51 => Instruction::Return,
+            0x52 => {
+                let (method, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let arg_count =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Instruction::MethodCall(method, arg_count)
+            }
             0x60 => Instruction::Alloc,
             0x61 => {
                 let (from, new_pos) = Self::deserialize_string(data, pos)?;
@@ -715,11 +776,40 @@ impl Bytecode {
             }
             0x74 => Instruction::GetIndex,
             0x75 => Instruction::SetIndex,
+            0x76 => {
+                if pos + 4 > data.len() {
+                    return Err("Unexpected end".to_string());
+                }
+                let count =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Instruction::MakeVec(count)
+            }
             0x80 => Instruction::EnterScope,
             0x81 => Instruction::ExitScope,
             0x90 => Instruction::Print,
             0xFE => Instruction::Nop,
             0xFF => Instruction::Halt,
+            0xA0 => Instruction::Dup,
+            0xA1 => Instruction::StrContains,
+            0xA2 => {
+                let (type_name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                Instruction::Cast(type_name)
+            }
+            0xA3 => {
+                let (func_name, new_pos) = Self::deserialize_string(data, pos)?;
+                pos = new_pos;
+                let param_count =
+                    u32::from_le_bytes([data[pos], data[pos + 1], data[pos + 2], data[pos + 3]])
+                        as usize;
+                pos += 4;
+                Instruction::MakeClosure {
+                    func_name,
+                    param_count,
+                }
+            }
             _ => return Err(format!("Unknown opcode: 0x{:02X}", opcode)),
         };
 

@@ -1,0 +1,38 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+
+  <!-- Left Brace { -->
+  <path
+    d="M88 64
+       C72 64 72 84 72 100
+       V116
+       C72 124 60 124 60 132
+       C60 140 72 140 72 148
+       V164
+       C72 180 72 200 88 200"
+    fill="none"
+    stroke="#00C2A8"
+    stroke-width="12"
+    stroke-linecap="square"
+  />
+
+  <!-- Right Brace } -->
+  <path
+    d="M168 64
+       C184 64 184 84 184 100
+       V116
+       C184 124 196 124 196 132
+       C196 140 184 140 184 148
+       V164
+       C184 180 184 200 168 200"
+    fill="none"
+    stroke="#00C2A8"
+    stroke-width="12"
+    stroke-linecap="square"
+  />
+
+  <!-- Bytecode instruction blocks -->
+  <rect x="108" y="92" width="40" height="12" fill="#00C2A8"/>
+  <rect x="108" y="122" width="40" height="12" fill="#00C2A8"/>
+  <rect x="108" y="152" width="40" height="12" fill="#00C2A8"/>
+
+</svg>

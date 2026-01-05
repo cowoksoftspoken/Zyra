@@ -1,0 +1,50 @@
+<svg width="256" height="256" viewBox="0 0 256 256" xmlns="http://www.w3.org/2000/svg">
+  <!-- Left Brace { -->
+  <path
+    d="M88 56
+       C72 56 72 76 72 96
+       V112
+       C72 120 60 120 60 128
+       C60 136 72 136 72 144
+       V160
+       C72 180 72 200 88 200"
+    fill="none"
+    stroke="#7C5CFF"
+    stroke-width="14"
+    stroke-linecap="square"
+  />
+
+  <!-- Right Brace } -->
+  <path
+    d="M168 56
+       C184 56 184 76 184 96
+       V112
+       C184 120 196 120 196 128
+       C196 136 184 136 184 144
+       V160
+       C184 180 184 200 168 200"
+    fill="none"
+    stroke="#7C5CFF"
+    stroke-width="14"
+    stroke-linecap="square"
+  />
+
+  <!-- Z (split) -->
+  <path
+    d="M104 88 H152 L118 132"
+    fill="none"
+    stroke="#7C5CFF"
+    stroke-width="18"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
+
+  <path
+    d="M138 124 L104 168 H152"
+    fill="none"
+    stroke="#7C5CFF"
+    stroke-width="18"
+    stroke-linecap="square"
+    stroke-linejoin="miter"
+  />
+</svg>

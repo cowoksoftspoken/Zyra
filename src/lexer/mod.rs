@@ -142,6 +142,8 @@ impl<'a> Lexer<'a> {
             '=' => {
                 if self.match_char('=') {
                     TokenKind::EqualEqual
+                } else if self.match_char('>') {
+                    TokenKind::FatArrow
                 } else {
                     TokenKind::Equal
                 }
@@ -178,7 +180,7 @@ impl<'a> Lexer<'a> {
                 if self.match_char('|') {
                     TokenKind::Or
                 } else {
-                    return Err(self.error("Unexpected character '|'. Did you mean '||'?"));
+                    TokenKind::Pipe // Single | for closure syntax
                 }
             }
 

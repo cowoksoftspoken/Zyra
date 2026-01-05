@@ -55,6 +55,10 @@ pub enum TokenKind {
     SelfType, // self
     Break,
     Continue,
+    Match, // match keyword for pattern matching
+    Ref,   // ref keyword for ref bindings
+    As,    // as keyword for type casting
+    Move,  // move keyword for closure captures
 
     // Types
     TypeInt,
@@ -106,7 +110,9 @@ pub enum TokenKind {
     ColonColon,   // :: (namespace separator)
     Semicolon,    // ;
     Arrow,        // ->
+    FatArrow,     // => for match arms
     Ampersand,    // &
+    Pipe,         // | for closures
 
     // Lifetimes
     Lifetime(String), // 'a, 'b, etc.
@@ -138,6 +144,10 @@ impl TokenKind {
             "self" => Some(TokenKind::SelfType),
             "break" => Some(TokenKind::Break),
             "continue" => Some(TokenKind::Continue),
+            "match" => Some(TokenKind::Match),
+            "ref" => Some(TokenKind::Ref),
+            "as" => Some(TokenKind::As),
+            "move" => Some(TokenKind::Move),
             "Int" => Some(TokenKind::TypeInt),
             "Float" => Some(TokenKind::TypeFloat),
             "Bool" => Some(TokenKind::TypeBool),
@@ -188,6 +198,10 @@ impl fmt::Display for TokenKind {
             TokenKind::SelfType => write!(f, "self"),
             TokenKind::Break => write!(f, "break"),
             TokenKind::Continue => write!(f, "continue"),
+            TokenKind::Match => write!(f, "match"),
+            TokenKind::Ref => write!(f, "ref"),
+            TokenKind::As => write!(f, "as"),
+            TokenKind::Move => write!(f, "move"),
             TokenKind::TypeInt => write!(f, "Int"),
             TokenKind::TypeFloat => write!(f, "Float"),
             TokenKind::TypeBool => write!(f, "Bool"),
@@ -228,7 +242,9 @@ impl fmt::Display for TokenKind {
             TokenKind::ColonColon => write!(f, "::"),
             TokenKind::Semicolon => write!(f, ";"),
             TokenKind::Arrow => write!(f, "->"),
+            TokenKind::FatArrow => write!(f, "=>"),
             TokenKind::Ampersand => write!(f, "&"),
+            TokenKind::Pipe => write!(f, "|"),
             TokenKind::Lifetime(l) => write!(f, "'{}", l),
             TokenKind::Newline => write!(f, "\\n"),
             TokenKind::Eof => write!(f, "EOF"),

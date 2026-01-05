@@ -10,7 +10,6 @@ struct Paddle {
 }
 
 impl Paddle {
-    // Create a new paddle
     func new(y: int, speed: int) -> Paddle {
         Paddle {
             y: y,
@@ -19,7 +18,6 @@ impl Paddle {
         }
     }
     
-    // Move paddle up with boundary check
     func move_up(mut self) {
         self.y = self.y - self.speed;
         if self.y < 0 {
@@ -27,7 +25,6 @@ impl Paddle {
         }
     }
     
-    // Move paddle down with boundary check
     func move_down(mut self) {
         self.y = self.y + self.speed;
         if self.y > 500 {
@@ -35,7 +32,6 @@ impl Paddle {
         }
     }
     
-    // Handle player input (W/S keys)
     func handle_input(mut self) {
         if key_pressed("W") {
             self.move_up();
@@ -45,7 +41,6 @@ impl Paddle {
         }
     }
     
-    // AI update - follow ball
     func update_ai(mut self, ball_y: int) {
         let paddle_center = self.y + 50;
         let ball_center = ball_y + 7;
@@ -58,13 +53,10 @@ impl Paddle {
         }
     }
     
-    // Get Y position
     func get_y(self) -> int {
         self.y
     }
 }
-
-// Legacy functions for backwards compatibility
 func move_up(paddle_y: int, speed: int) -> int {
     let new_y = paddle_y - speed;
     if new_y < 0 {

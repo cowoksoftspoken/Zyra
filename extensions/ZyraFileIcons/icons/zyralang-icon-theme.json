@@ -7,10 +7,10 @@
   },
   "iconDefinitions": {
     "zr": {
-      "iconPath": "./zyra_source/favicon-16x16.png"
+      "iconPath": "./zyra.svg"
     },
     "zyc": {
-      "iconPath": "./zyc/favicon-16x16.png"
+      "iconPath": "./zyc.svg"
     }
   }
 }

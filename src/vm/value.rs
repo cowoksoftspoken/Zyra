@@ -39,6 +39,14 @@ impl Value {
             (Value::String(a), b) => Some(Value::String(format!("{}{}", a, b))),
             (a, Value::String(b)) => Some(Value::String(format!("{}{}", a, b))),
 
+            // I64 and Int cross-compatibility (Int is legacy i64)
+            (Value::I64(a), Value::Int(b)) => Some(Value::I64(a.wrapping_add(*b))),
+            (Value::Int(a), Value::I64(b)) => Some(Value::I64(a.wrapping_add(*b))),
+
+            // F64 and Float cross-compatibility (Float is legacy f64)
+            (Value::F64(a), Value::Float(b)) => Some(Value::F64(a + b)),
+            (Value::Float(a), Value::F64(b)) => Some(Value::Float(a + b)),
+
             _ => None,
         }
     }
@@ -163,6 +171,11 @@ impl Value {
             (Value::I64(a), Value::I64(b)) => Some(Value::Bool(a < b)),
             (Value::F32(a), Value::F32(b)) => Some(Value::Bool(a < b)),
             (Value::String(a), Value::String(b)) => Some(Value::Bool(a < b)),
+
+            // None comparisons: treat None as 0 for numeric comparisons
+            (Value::None, Value::Int(b)) => Some(Value::Bool(&0 < b)),
+            (Value::Int(a), Value::None) => Some(Value::Bool(a < &0)),
+            (Value::None, Value::None) => Some(Value::Bool(false)),
             _ => None,
         }
     }
@@ -176,6 +189,11 @@ impl Value {
             (Value::I32(a), Value::I32(b)) => Some(Value::Bool(a <= b)),
             (Value::I64(a), Value::I64(b)) => Some(Value::Bool(a <= b)),
             (Value::F32(a), Value::F32(b)) => Some(Value::Bool(a <= b)),
+
+            // None comparisons
+            (Value::None, Value::Int(b)) => Some(Value::Bool(&0 <= b)),
+            (Value::Int(a), Value::None) => Some(Value::Bool(a <= &0)),
+            (Value::None, Value::None) => Some(Value::Bool(true)),
             _ => None,
         }
     }
@@ -189,6 +207,11 @@ impl Value {
             (Value::I32(a), Value::I32(b)) => Some(Value::Bool(a > b)),
             (Value::I64(a), Value::I64(b)) => Some(Value::Bool(a > b)),
             (Value::F32(a), Value::F32(b)) => Some(Value::Bool(a > b)),
+
+            // None comparisons: treat None as 0 for numeric comparisons
+            (Value::None, Value::Int(b)) => Some(Value::Bool(&0 > b)),
+            (Value::Int(a), Value::None) => Some(Value::Bool(a > &0)),
+            (Value::None, Value::None) => Some(Value::Bool(false)),
             _ => None,
         }
     }
@@ -202,6 +225,11 @@ impl Value {
             (Value::I32(a), Value::I32(b)) => Some(Value::Bool(a >= b)),
             (Value::I64(a), Value::I64(b)) => Some(Value::Bool(a >= b)),
             (Value::F32(a), Value::F32(b)) => Some(Value::Bool(a >= b)),
+
+            // None comparisons
+            (Value::None, Value::Int(b)) => Some(Value::Bool(&0 >= b)),
+            (Value::Int(a), Value::None) => Some(Value::Bool(a >= &0)),
+            (Value::None, Value::None) => Some(Value::Bool(true)),
             _ => None,
         }
     }

@@ -1,7 +1,9 @@
 //! Zyra Programming Language
 //!
-//! A modern, safe, and deterministic programming language built in Rust.
-//! Designed for students, beginner programmers, and indie game developers.
+//! A modern, statically typed and deterministic programming language built in Rust.
+//! Zyra combines a custom compiler and lightweight virtual machine with
+//! compile-time memory safety via ownership, borrowing, and lifetime checking.
+//! This design enables fast, predictable, and garbage-collection-free execution.
 
 pub mod compiler;
 pub mod error;

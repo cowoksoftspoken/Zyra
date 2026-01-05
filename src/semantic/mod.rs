@@ -87,6 +87,8 @@ pub struct SemanticAnalyzer {
     imported_std_modules: std::collections::HashSet<String>,
     /// Specific items imported from std modules (e.g., "sqrt" from "std::math")
     imported_std_items: HashMap<String, String>, // item_name -> module_name
+    /// Module aliases (e.g., "math" -> "std::math") for shorthand access
+    module_aliases: HashMap<String, String>,
     /// Tracks if `self` is mutable in current method (None = not in method)
     self_is_mutable: Option<bool>,
 }
@@ -121,6 +123,7 @@ impl SemanticAnalyzer {
             function_scope: None,
             imported_std_modules: std::collections::HashSet::new(),
             imported_std_items: HashMap::new(),
+            module_aliases: HashMap::new(),
             self_is_mutable: None,
         };
 
@@ -215,8 +218,8 @@ impl SemanticAnalyzer {
             FunctionSignature {
                 name: "Window".to_string(),
                 params: vec![
-                    ("width".to_string(), ZyraType::I64),
-                    ("height".to_string(), ZyraType::I64),
+                    ("width".to_string(), ZyraType::I32),
+                    ("height".to_string(), ZyraType::I32),
                     ("title".to_string(), ZyraType::String),
                 ],
                 return_type: ZyraType::Object(HashMap::new()),
@@ -227,57 +230,61 @@ impl SemanticAnalyzer {
     }
 
     /// Register functions from a specific std module
-    fn register_std_module_functions(&mut self, module_name: &str) {
+    fn register_std_module_functions(
+        &mut self,
+        module_name: &str,
+        specific_imports: Option<&Vec<String>>,
+    ) {
         let functions: Vec<(&str, Vec<(&str, ZyraType)>, ZyraType)> = match module_name {
             "std::math" => vec![
-                ("abs", vec![("x", ZyraType::F64)], ZyraType::F64),
-                ("sqrt", vec![("x", ZyraType::F64)], ZyraType::F64),
+                ("abs", vec![("x", ZyraType::F32)], ZyraType::F32),
+                ("sqrt", vec![("x", ZyraType::F32)], ZyraType::F32),
                 (
                     "pow",
-                    vec![("base", ZyraType::F64), ("exp", ZyraType::F64)],
-                    ZyraType::F64,
+                    vec![("base", ZyraType::F32), ("exp", ZyraType::F32)],
+                    ZyraType::F32,
                 ),
-                ("sin", vec![("x", ZyraType::F64)], ZyraType::F64),
-                ("cos", vec![("x", ZyraType::F64)], ZyraType::F64),
-                ("tan", vec![("x", ZyraType::F64)], ZyraType::F64),
+                ("sin", vec![("x", ZyraType::F32)], ZyraType::F32),
+                ("cos", vec![("x", ZyraType::F32)], ZyraType::F32),
+                ("tan", vec![("x", ZyraType::F32)], ZyraType::F32),
                 (
                     "min",
-                    vec![("a", ZyraType::F64), ("b", ZyraType::F64)],
-                    ZyraType::F64,
+                    vec![("a", ZyraType::F32), ("b", ZyraType::F32)],
+                    ZyraType::F32,
                 ),
                 (
                     "max",
-                    vec![("a", ZyraType::F64), ("b", ZyraType::F64)],
-                    ZyraType::F64,
+                    vec![("a", ZyraType::F32), ("b", ZyraType::F32)],
+                    ZyraType::F32,
                 ),
-                ("floor", vec![("x", ZyraType::F64)], ZyraType::I64),
-                ("ceil", vec![("x", ZyraType::F64)], ZyraType::I64),
-                ("round", vec![("x", ZyraType::F64)], ZyraType::I64),
+                ("floor", vec![("x", ZyraType::F32)], ZyraType::I32),
+                ("ceil", vec![("x", ZyraType::F32)], ZyraType::I32),
+                ("round", vec![("x", ZyraType::F32)], ZyraType::I32),
                 (
                     "random",
-                    vec![("min", ZyraType::I64), ("max", ZyraType::I64)],
-                    ZyraType::I64,
+                    vec![("min", ZyraType::I32), ("max", ZyraType::I32)],
+                    ZyraType::I32,
                 ),
                 (
                     "lerp",
                     vec![
-                        ("a", ZyraType::F64),
-                        ("b", ZyraType::F64),
-                        ("t", ZyraType::F64),
+                        ("a", ZyraType::F32),
+                        ("b", ZyraType::F32),
+                        ("t", ZyraType::F32),
                     ],
-                    ZyraType::F64,
+                    ZyraType::F32,
                 ),
                 (
                     "clamp",
                     vec![
-                        ("x", ZyraType::F64),
-                        ("min", ZyraType::F64),
-                        ("max", ZyraType::F64),
+                        ("x", ZyraType::F32),
+                        ("min", ZyraType::F32),
+                        ("max", ZyraType::F32),
                     ],
-                    ZyraType::F64,
+                    ZyraType::F32,
                 ),
-                ("pi", vec![], ZyraType::F64),
-                ("e", vec![], ZyraType::F64),
+                ("pi", vec![], ZyraType::F32),
+                ("e", vec![], ZyraType::F32),
             ],
             "std::io" => vec![
                 ("print", vec![("value", ZyraType::Unknown)], ZyraType::Void),
@@ -291,7 +298,7 @@ impl SemanticAnalyzer {
             "std::time" => vec![
                 ("now", vec![], ZyraType::I64),
                 ("now_secs", vec![], ZyraType::F64),
-                ("sleep", vec![("ms", ZyraType::I64)], ZyraType::Void),
+                ("sleep", vec![("ms", ZyraType::I32)], ZyraType::Void),
                 ("monotonic_ms", vec![], ZyraType::I64),
                 ("instant_now", vec![], ZyraType::I64),
                 (
@@ -299,11 +306,11 @@ impl SemanticAnalyzer {
                     vec![("id", ZyraType::I64)],
                     ZyraType::I64,
                 ),
-                ("delta_time", vec![], ZyraType::F64),
-                ("fps", vec![], ZyraType::F64),
+                ("delta_time", vec![], ZyraType::F32),
+                ("fps", vec![], ZyraType::F32),
             ],
             "std::string" => vec![
-                ("string_len", vec![("s", ZyraType::String)], ZyraType::I64),
+                ("string_len", vec![("s", ZyraType::String)], ZyraType::I32),
                 ("to_upper", vec![("s", ZyraType::String)], ZyraType::String),
                 ("to_lower", vec![("s", ZyraType::String)], ZyraType::String),
                 ("trim", vec![("s", ZyraType::String)], ZyraType::String),
@@ -326,8 +333,8 @@ impl SemanticAnalyzer {
                     vec![("s", ZyraType::String), ("delim", ZyraType::String)],
                     ZyraType::Vec(Box::new(ZyraType::String)),
                 ),
-                ("parse_int", vec![("s", ZyraType::String)], ZyraType::I64),
-                ("parse_float", vec![("s", ZyraType::String)], ZyraType::F64),
+                ("parse_int", vec![("s", ZyraType::String)], ZyraType::I32),
+                ("parse_float", vec![("s", ZyraType::String)], ZyraType::F32),
             ],
             "std::fs" => vec![
                 (
@@ -411,8 +418,8 @@ impl SemanticAnalyzer {
                 (
                     "Window",
                     vec![
-                        ("width", ZyraType::I64),
-                        ("height", ZyraType::I64),
+                        ("width", ZyraType::I32),
+                        ("height", ZyraType::I32),
                         ("title", ZyraType::String),
                     ],
                     ZyraType::Object(HashMap::new()),
@@ -428,10 +435,10 @@ impl SemanticAnalyzer {
                 (
                     "draw_rect",
                     vec![
-                        ("x", ZyraType::I64),
-                        ("y", ZyraType::I64),
-                        ("w", ZyraType::I64),
-                        ("h", ZyraType::I64),
+                        ("x", ZyraType::I32),
+                        ("y", ZyraType::I32),
+                        ("w", ZyraType::I32),
+                        ("h", ZyraType::I32),
                     ],
                     ZyraType::Void,
                 ),
@@ -445,20 +452,32 @@ impl SemanticAnalyzer {
                 .map(|(n, t)| (n.to_string(), t))
                 .collect();
 
-            self.functions.insert(
-                name.to_string(),
-                FunctionSignature {
-                    name: name.to_string(),
-                    params: param_types,
-                    return_type,
-                    lifetimes: vec![],
-                    has_mut_self: false,
-                },
-            );
+            let sig = FunctionSignature {
+                name: name.to_string(),
+                params: param_types,
+                return_type,
+                lifetimes: vec![],
+                has_mut_self: false,
+            };
 
-            // Track that this function came from this module
+            // 1. Always register fully qualified name (e.g., std::math::sin)
+            let qualified_name = format!("{}::{}", module_name, name);
+            self.functions.insert(qualified_name.clone(), sig.clone());
             self.imported_std_items
-                .insert(name.to_string(), module_name.to_string());
+                .insert(qualified_name.clone(), module_name.to_string());
+
+            // 2. Register short name if specifically requested OR importing entire module
+            let should_import = match specific_imports {
+                None => true, // Import all check
+                Some(list) => list.contains(&name.to_string()),
+            };
+
+            if should_import {
+                self.functions.insert(name.to_string(), sig);
+                // Track that this function came from this module
+                self.imported_std_items
+                    .insert(name.to_string(), module_name.to_string());
+            }
         }
     }
 
@@ -694,12 +713,89 @@ impl SemanticAnalyzer {
         }
 
         // Second pass: analyze statements
+        // Check for illegal top-level code (executable statements outside functions)
+        for stmt in &program.statements {
+            match stmt {
+                // These are allowed at top level
+                Statement::Function { .. }
+                | Statement::Struct { .. }
+                | Statement::Enum { .. }
+                | Statement::Impl { .. }
+                | Statement::Trait { .. }
+                | Statement::Import { .. } => {}
+
+                // These are NOT allowed at top level
+                Statement::Let { name, span, .. } => {
+                    return Err(ZyraError::new(
+                        "CompileError",
+                        &format!(
+                            "Top-level variable '{}' not allowed. Move it inside 'func main() {{ ... }}'",
+                            name
+                        ),
+                        Some(SourceLocation::new("", span.line, span.column)),
+                    ));
+                }
+                Statement::Expression { span, .. } => {
+                    return Err(ZyraError::new(
+                        "CompileError",
+                        "Top-level expressions not allowed. Move them inside 'func main() { ... }'",
+                        Some(SourceLocation::new("", span.line, span.column)),
+                    ));
+                }
+                Statement::Return { span, .. } => {
+                    return Err(ZyraError::new(
+                        "CompileError",
+                        "Return statement outside of function",
+                        Some(SourceLocation::new("", span.line, span.column)),
+                    ));
+                }
+                Statement::If { span, .. }
+                | Statement::While { span, .. }
+                | Statement::For { span, .. } => {
+                    return Err(ZyraError::new(
+                        "CompileError",
+                        "Control flow statements not allowed at top level. Move them inside 'func main() { ... }'",
+                        Some(SourceLocation::new("", span.line, span.column)),
+                    ));
+                }
+                Statement::Block { .. } => {
+                    return Err(ZyraError::new(
+                        "CompileError",
+                        "Top-level blocks not allowed. Move them inside 'func main() { ... }'",
+                        None,
+                    ));
+                }
+            }
+        }
+
+        // Third pass: analyze statements
         for stmt in &program.statements {
             self.analyze_statement(stmt)?;
         }
 
         if !self.errors.is_empty() {
             return Err(self.errors[0].clone());
+        }
+
+        // *** MAIN FUNCTION REQUIRED ***
+        // Programs must have a main() function as entry point
+        if !self.functions.contains_key("main") {
+            return Err(ZyraError::new(
+                "CompileError",
+                "No 'main' function found. Programs must have a 'func main() { ... }' as entry point.",
+                None,
+            ));
+        }
+
+        // Verify main() has no parameters
+        if let Some(main_sig) = self.functions.get("main") {
+            if !main_sig.params.is_empty() {
+                return Err(ZyraError::new(
+                    "CompileError",
+                    "main() function must not have parameters.",
+                    None,
+                ));
+            }
         }
 
         Ok(())
@@ -904,10 +1000,13 @@ impl SemanticAnalyzer {
                 // Analyze body
                 let body_type = self.analyze_block(body)?;
 
-                // Check return type
+                // Check return type (only if body has a trailing expression, not explicit returns)
+                // Functions with explicit `return` statements have Void body type but
+                // returns are validated separately in Statement::Return handling
                 if let Some(ret) = return_type {
                     let expected = ZyraType::from_ast_type(ret);
-                    if !body_type.is_compatible(&expected) {
+                    // Skip check if body is Void - explicit returns are checked separately
+                    if !matches!(body_type, ZyraType::Void) && !expected.is_compatible(&body_type) {
                         self.errors.push(ZyraError::type_error(
                             &format!(
                                 "Function '{}' should return {}, but body returns {}",
@@ -949,15 +1048,53 @@ impl SemanticAnalyzer {
                         let module_name = path.join("::");
                         self.imported_std_modules.insert(module_name.clone());
 
+                        // Register module alias (e.g., "math" -> "std::math")
+                        // For nested modules like std::game::physics, register:
+                        //   "physics" -> "std::game::physics"
+                        //   "game::physics" -> "std::game::physics"
+                        if path.len() >= 2 {
+                            // Always register the last segment as alias
+                            let short_alias = path.last().unwrap().clone();
+
+                            // Check for conflicts with user-defined functions/types
+                            if self.functions.contains_key(&short_alias) {
+                                return Err(ZyraError::new(
+                                    "ImportError",
+                                    &format!(
+                                        "Module alias '{}' conflicts with existing function. Rename your function or use fully qualified import.",
+                                        short_alias
+                                    ),
+                                    None,
+                                ));
+                            }
+                            if self.types.contains_key(&short_alias) {
+                                return Err(ZyraError::new(
+                                    "ImportError",
+                                    &format!(
+                                        "Module alias '{}' conflicts with existing type. Rename your type or use fully qualified import.",
+                                        short_alias
+                                    ),
+                                    None,
+                                ));
+                            }
+
+                            self.module_aliases.insert(short_alias, module_name.clone());
+
+                            // For deeper nesting, also register intermediate paths
+                            // e.g., std::game::physics -> also register "game::physics"
+                            for i in 1..path.len() - 1 {
+                                let intermediate_alias = path[i..].join("::");
+                                self.module_aliases
+                                    .insert(intermediate_alias, module_name.clone());
+                            }
+                        }
+
                         // If specific items are imported, register them
                         if !items.is_empty() {
-                            for item in items {
-                                self.imported_std_items
-                                    .insert(item.clone(), module_name.clone());
-                            }
+                            self.register_std_module_functions(&module_name, Some(items));
                         } else {
                             // Import all functions from this module
-                            self.register_std_module_functions(&module_name);
+                            self.register_std_module_functions(&module_name, None);
                         }
                         Ok(ZyraType::Void)
                     }
@@ -966,7 +1103,7 @@ impl SemanticAnalyzer {
                         // Legacy single-word modules - convert to std:: form
                         let module_name = format!("std::{}", root);
                         self.imported_std_modules.insert(module_name.clone());
-                        self.register_std_module_functions(&module_name);
+                        self.register_std_module_functions(&module_name, None);
                         Ok(ZyraType::Void)
                     }
                     "src" => {
@@ -991,7 +1128,7 @@ impl SemanticAnalyzer {
                 // Check against function return type
                 if let Some(ref func_name) = self.current_function {
                     if let Some(sig) = self.functions.get(func_name) {
-                        if !return_type.is_compatible(&sig.return_type) {
+                        if !sig.return_type.is_compatible(&return_type) {
                             return Err(ZyraError::type_error(
                                 &format!(
                                     "Return type mismatch: expected {}, found {}",
@@ -1198,8 +1335,8 @@ impl SemanticAnalyzer {
 
     fn analyze_expression(&mut self, expr: &Expression) -> ZyraResult<ZyraType> {
         match expr {
-            Expression::Int { .. } => Ok(ZyraType::I32),
-            Expression::Float { .. } => Ok(ZyraType::F32),
+            Expression::Int { .. } => Ok(ZyraType::I32), // Default integer literals to i32 (memory efficient)
+            Expression::Float { .. } => Ok(ZyraType::F32), // Default float literals to f32 (memory efficient)
             Expression::Bool { .. } => Ok(ZyraType::Bool),
             Expression::Char { .. } => Ok(ZyraType::Char),
             Expression::String { .. } => Ok(ZyraType::String),
@@ -1243,12 +1380,23 @@ impl SemanticAnalyzer {
                     | BinaryOp::Divide
                     | BinaryOp::Modulo => {
                         if left_type.is_numeric() && right_type.is_numeric() {
-                            // Promote to float if either is float
-                            if left_type.is_float() || right_type.is_float() {
-                                Ok(ZyraType::F32)
-                            } else {
-                                Ok(ZyraType::I32)
+                            // STRICT TYPE CHECKING: Types must match exactly
+                            // No implicit type promotion - use explicit `as` cast
+                            if left_type != right_type {
+                                return Err(ZyraError::type_error(
+                                    &format!(
+                                        "Cannot apply '{}' between {} and {} - types must match. Use explicit cast: `value as {}`",
+                                        operator.as_str(),
+                                        left_type.display_name(),
+                                        right_type.display_name(),
+                                        left_type.display_name()
+                                    ),
+                                    Some(SourceLocation::new("", span.line, span.column)),
+                                ));
                             }
+
+                            // Return the same type
+                            Ok(left_type)
                         } else if matches!(operator, BinaryOp::Add)
                             && matches!(left_type, ZyraType::String)
                         {
@@ -1424,6 +1572,34 @@ impl SemanticAnalyzer {
                     _ => return Ok(ZyraType::Unknown),
                 };
 
+                // *** MODULE ALIAS EXPANSION ***
+                // Expand aliased names like "math::abs" to "std::math::abs"
+                let func_name = if func_name.contains("::") {
+                    let parts: Vec<&str> = func_name.splitn(2, "::").collect();
+                    if parts.len() == 2 {
+                        if let Some(full_module) = self.module_aliases.get(parts[0]) {
+                            // Expand alias: math::abs -> std::math::abs
+                            format!("{}::{}", full_module, parts[1])
+                        } else {
+                            func_name
+                        }
+                    } else {
+                        func_name
+                    }
+                } else {
+                    func_name
+                };
+
+                // *** MAIN FUNCTION PROTECTION ***
+                // main() is the program entry point and cannot be called directly
+                if func_name == "main" {
+                    return Err(ZyraError::new(
+                        "SemanticError",
+                        "Cannot call 'main' - it is the program entry point",
+                        Some(SourceLocation::new("", span.line, span.column)),
+                    ));
+                }
+
                 // *** STDLIB IMPORT ENFORCEMENT ***
                 // Check if this is a stdlib function that requires import
                 if self.is_stdlib_function(&func_name)
@@ -1590,6 +1766,7 @@ impl SemanticAnalyzer {
 
                 match obj_type {
                     ZyraType::Vec(inner) => Ok(*inner),
+                    ZyraType::Array { elem, .. } => Ok(*elem),
                     ZyraType::String => Ok(ZyraType::String),
                     ZyraType::Unknown => Ok(ZyraType::Unknown),
                     _ => Err(ZyraError::type_error(
@@ -1600,6 +1777,23 @@ impl SemanticAnalyzer {
             }
 
             Expression::List { elements, .. } => {
+                // Array literal [a, b, c] - fixed size, inferred as Array type
+                if elements.is_empty() {
+                    Ok(ZyraType::Array {
+                        elem: Box::new(ZyraType::Unknown),
+                        size: 0,
+                    })
+                } else {
+                    let first_type = self.analyze_expression(&elements[0])?;
+                    Ok(ZyraType::Array {
+                        elem: Box::new(first_type),
+                        size: elements.len(),
+                    })
+                }
+            }
+
+            Expression::VecLiteral { elements, .. } => {
+                // Vec literal vec[a, b, c] - dynamic, resizable
                 if elements.is_empty() {
                     Ok(ZyraType::Vec(Box::new(ZyraType::Unknown)))
                 } else {
@@ -1711,7 +1905,505 @@ impl SemanticAnalyzer {
                 // Return the enum type
                 Ok(ZyraType::Enum(enum_name.clone()))
             }
+
+            // Match expression: match scrutinee { pattern => body, ... }
+            Expression::Match {
+                scrutinee,
+                arms,
+                span,
+            } => {
+                // Analyze scrutinee to get its type
+                let scrutinee_type = self.analyze_expression(scrutinee)?;
+
+                // Track return types from all arms
+                let mut arm_types: Vec<ZyraType> = Vec::new();
+
+                // Analyze each arm
+                for arm in arms {
+                    // Check guard purity if present
+                    if let Some(ref guard) = arm.guard {
+                        Self::check_guard_purity(guard)?;
+                        // Analyze guard expression
+                        let guard_type = self.analyze_expression(guard)?;
+                        if !matches!(guard_type, ZyraType::Bool | ZyraType::Unknown) {
+                            return Err(ZyraError::type_error(
+                                "Match guard must be a boolean expression",
+                                Some(SourceLocation::new("", span.line, span.column)),
+                            ));
+                        }
+                    }
+
+                    // Enter new scope for pattern bindings
+                    self.enter_scope();
+
+                    // Introduce pattern bindings into scope
+                    self.analyze_pattern_bindings(&arm.pattern, &scrutinee_type)?;
+
+                    // Analyze arm body
+                    let body_type = self.analyze_expression(&arm.body)?;
+                    arm_types.push(body_type);
+
+                    // Exit pattern scope
+                    self.exit_scope();
+                }
+
+                // Check exhaustiveness (conservative: require _ or all variants)
+                Self::check_exhaustiveness(arms, &scrutinee_type, *span)?;
+
+                // Return type is common type of all arms (or Unknown if mixed)
+                if let Some(first) = arm_types.first() {
+                    if arm_types.iter().all(|t| t.is_compatible(first)) {
+                        Ok(first.clone())
+                    } else {
+                        Ok(ZyraType::Unknown)
+                    }
+                } else {
+                    Ok(ZyraType::Void)
+                }
+            }
+
+            // Type cast expression: expr as Type
+            Expression::Cast {
+                expr,
+                target_type,
+                span,
+            } => {
+                let source_type = self.analyze_expression(expr)?;
+                let target = ZyraType::from_ast_type(target_type);
+
+                // Validate cast is allowed
+                if !source_type.is_castable(&target) {
+                    return Err(ZyraError::type_error(
+                        &format!(
+                            "Cannot cast {} to {}",
+                            source_type.display_name(),
+                            target.display_name()
+                        ),
+                        Some(SourceLocation::new("", span.line, span.column)),
+                    ));
+                }
+
+                // Cast succeeds - return target type
+                Ok(target)
+            }
+
+            // Closure expression: |params| body
+            Expression::Closure {
+                params,
+                return_type,
+                body,
+                capture_mode,
+                span,
+            } => {
+                // Collect outer scope variable names before entering closure scope
+                let outer_scope_vars: std::collections::HashSet<String> =
+                    self.symbols.keys().cloned().collect();
+
+                // Collect param names to exclude from captures
+                let param_names: std::collections::HashSet<String> =
+                    params.iter().map(|p| p.name.clone()).collect();
+
+                // Increment scope depth for closure
+                self.scope_depth += 1;
+                let current_scope_id = self.scope_stack.current();
+
+                // Register closure parameters in symbol table
+                let param_types: Vec<ZyraType> = params
+                    .iter()
+                    .map(|p| {
+                        let param_type = p
+                            .param_type
+                            .as_ref()
+                            .map(|t| ZyraType::from_ast_type(t))
+                            .unwrap_or(ZyraType::I32); // Default to i32 if not specified
+
+                        // Register parameter in symbol table
+                        self.symbols.insert(
+                            p.name.clone(),
+                            Symbol {
+                                name: p.name.clone(),
+                                symbol_type: param_type.clone(),
+                                mutable: false,
+                                scope_depth: self.scope_depth,
+                                scope_id: current_scope_id,
+                                origin: ValueOrigin::Param,
+                                decl_line: span.line,
+                            },
+                        );
+
+                        // Also register with ownership checker
+                        let _ = self.ownership.define(&p.name, false, span.line);
+
+                        param_type
+                    })
+                    .collect();
+
+                // Analyze closure body with parameters in scope
+                let body_type = self.analyze_expression(body)?;
+
+                // Detect captured variables: outer scope vars referenced in body
+                let captured_vars =
+                    self.detect_captured_variables(body, &outer_scope_vars, &param_names);
+
+                // Enforce ownership rules based on capture_mode
+                for captured_var in &captured_vars {
+                    match capture_mode {
+                        crate::parser::ast::CaptureMode::Move => {
+                            // Move semantics: mark variable as moved
+                            let move_result = self.ownership.move_value(
+                                captured_var,
+                                &format!("closure_capture_{}", captured_var),
+                                span.line,
+                            );
+                            if let Err(e) = move_result {
+                                return Err(ZyraError::ownership_error(
+                                    &format!("Cannot move '{}' into closure: {}", captured_var, e),
+                                    Some(SourceLocation::new("", span.line, span.column)),
+                                ));
+                            }
+                        }
+                        crate::parser::ast::CaptureMode::Borrow => {
+                            // Borrow semantics: create immutable borrow
+                            let borrow_result = self.ownership.borrow(
+                                captured_var,
+                                &format!("closure_capture_{}", captured_var),
+                                span.line,
+                            );
+                            if let Err(e) = borrow_result {
+                                return Err(ZyraError::ownership_error(
+                                    &format!("Cannot borrow '{}' in closure: {}", captured_var, e),
+                                    Some(SourceLocation::new("", span.line, span.column)),
+                                ));
+                            }
+                        }
+                    }
+                }
+
+                // Remove closure params from symbols (they go out of scope)
+                for p in params {
+                    self.symbols.remove(&p.name);
+                }
+
+                // Exit closure scope
+                self.scope_depth -= 1;
+
+                let ret_type = return_type
+                    .as_ref()
+                    .map(|t| ZyraType::from_ast_type(t))
+                    .unwrap_or(body_type);
+
+                Ok(ZyraType::Closure {
+                    params: param_types,
+                    return_type: Box::new(ret_type),
+                })
+            }
         }
+    }
+
+    /// Check that a match guard is pure (no side effects)
+    fn check_guard_purity(guard: &Expression) -> ZyraResult<()> {
+        match guard {
+            // Assignments are side effects
+            Expression::Assignment { span, .. } => Err(ZyraError::type_error(
+                "Match guard cannot contain assignment (must be pure)",
+                Some(SourceLocation::new("", span.line, span.column)),
+            )),
+            // Function calls may have side effects - conservative rejection
+            Expression::Call { span, .. } => Err(ZyraError::type_error(
+                "Match guard cannot contain function calls (must be pure)",
+                Some(SourceLocation::new("", span.line, span.column)),
+            )),
+            // Binary and unary expressions are pure if operands are pure
+            Expression::Binary { left, right, .. } => {
+                Self::check_guard_purity(left)?;
+                Self::check_guard_purity(right)?;
+                Ok(())
+            }
+            Expression::Unary { operand, .. } => {
+                Self::check_guard_purity(operand)?;
+                Ok(())
+            }
+            // Identifiers, literals are pure
+            Expression::Identifier { .. }
+            | Expression::Int { .. }
+            | Expression::Float { .. }
+            | Expression::Bool { .. }
+            | Expression::Char { .. }
+            | Expression::String { .. } => Ok(()),
+            // Field access is pure
+            Expression::FieldAccess { object, .. } => Self::check_guard_purity(object),
+            // Grouped expressions
+            Expression::Grouped { inner, .. } => Self::check_guard_purity(inner),
+            // Other expressions - allow for now
+            _ => Ok(()),
+        }
+    }
+
+    /// Detect variables captured from outer scope in a closure body
+    fn detect_captured_variables(
+        &self,
+        expr: &Expression,
+        outer_scope_vars: &std::collections::HashSet<String>,
+        param_names: &std::collections::HashSet<String>,
+    ) -> Vec<String> {
+        let mut captured = Vec::new();
+        self.collect_variable_refs(expr, outer_scope_vars, param_names, &mut captured);
+        // Remove duplicates
+        captured.sort();
+        captured.dedup();
+        captured
+    }
+
+    /// Recursively collect variable references from an expression
+    fn collect_variable_refs(
+        &self,
+        expr: &Expression,
+        outer_scope_vars: &std::collections::HashSet<String>,
+        param_names: &std::collections::HashSet<String>,
+        captured: &mut Vec<String>,
+    ) {
+        match expr {
+            Expression::Identifier { name, .. } => {
+                // If it's an outer scope var and not a param, it's captured
+                if outer_scope_vars.contains(name) && !param_names.contains(name) {
+                    captured.push(name.clone());
+                }
+            }
+            Expression::Binary { left, right, .. } => {
+                self.collect_variable_refs(left, outer_scope_vars, param_names, captured);
+                self.collect_variable_refs(right, outer_scope_vars, param_names, captured);
+            }
+            Expression::Unary { operand, .. } => {
+                self.collect_variable_refs(operand, outer_scope_vars, param_names, captured);
+            }
+            Expression::Call { arguments, .. } => {
+                for arg in arguments {
+                    self.collect_variable_refs(arg, outer_scope_vars, param_names, captured);
+                }
+            }
+            Expression::FieldAccess { object, .. } => {
+                self.collect_variable_refs(object, outer_scope_vars, param_names, captured);
+            }
+            Expression::Index { object, index, .. } => {
+                self.collect_variable_refs(object, outer_scope_vars, param_names, captured);
+                self.collect_variable_refs(index, outer_scope_vars, param_names, captured);
+            }
+            Expression::Grouped { inner, .. } => {
+                self.collect_variable_refs(inner, outer_scope_vars, param_names, captured);
+            }
+            Expression::List { elements, .. } => {
+                for elem in elements {
+                    self.collect_variable_refs(elem, outer_scope_vars, param_names, captured);
+                }
+            }
+            Expression::Cast { expr, .. } => {
+                self.collect_variable_refs(expr, outer_scope_vars, param_names, captured);
+            }
+            Expression::Closure { body, .. } => {
+                // Nested closures - recursively check but don't capture their params
+                self.collect_variable_refs(body, outer_scope_vars, param_names, captured);
+            }
+            Expression::Reference { value, .. } => {
+                self.collect_variable_refs(value, outer_scope_vars, param_names, captured);
+            }
+            Expression::Dereference { value, .. } => {
+                self.collect_variable_refs(value, outer_scope_vars, param_names, captured);
+            }
+            Expression::Assignment { target, value, .. } => {
+                self.collect_variable_refs(target, outer_scope_vars, param_names, captured);
+                self.collect_variable_refs(value, outer_scope_vars, param_names, captured);
+            }
+            // Literals don't capture
+            Expression::Int { .. }
+            | Expression::Float { .. }
+            | Expression::Bool { .. }
+            | Expression::Char { .. }
+            | Expression::String { .. } => {}
+            // Other expressions - skip for simplicity
+            _ => {}
+        }
+    }
+
+    /// Collect variable refs from a statement
+    #[allow(dead_code)]
+    fn collect_variable_refs_from_stmt(
+        &self,
+        stmt: &Statement,
+        outer_scope_vars: &std::collections::HashSet<String>,
+        param_names: &std::collections::HashSet<String>,
+        captured: &mut Vec<String>,
+    ) {
+        match stmt {
+            Statement::Expression { expr, .. } => {
+                self.collect_variable_refs(expr, outer_scope_vars, param_names, captured);
+            }
+            Statement::Let { value, .. } => {
+                self.collect_variable_refs(value, outer_scope_vars, param_names, captured);
+            }
+            Statement::Return {
+                value: Some(expr), ..
+            } => {
+                self.collect_variable_refs(expr, outer_scope_vars, param_names, captured);
+            }
+            Statement::If {
+                condition,
+                then_block,
+                else_block,
+                ..
+            } => {
+                self.collect_variable_refs(condition, outer_scope_vars, param_names, captured);
+                for s in &then_block.statements {
+                    self.collect_variable_refs_from_stmt(
+                        s,
+                        outer_scope_vars,
+                        param_names,
+                        captured,
+                    );
+                }
+                if let Some(else_blk) = else_block {
+                    for s in &else_blk.statements {
+                        self.collect_variable_refs_from_stmt(
+                            s,
+                            outer_scope_vars,
+                            param_names,
+                            captured,
+                        );
+                    }
+                }
+            }
+            Statement::While {
+                condition, body, ..
+            } => {
+                self.collect_variable_refs(condition, outer_scope_vars, param_names, captured);
+                for s in &body.statements {
+                    self.collect_variable_refs_from_stmt(
+                        s,
+                        outer_scope_vars,
+                        param_names,
+                        captured,
+                    );
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Introduce pattern bindings into current scope (simplified)
+    fn analyze_pattern_bindings(
+        &mut self,
+        pattern: &crate::parser::ast::Pattern,
+        scrutinee_type: &ZyraType,
+    ) -> ZyraResult<()> {
+        use crate::parser::ast::Pattern;
+        match pattern {
+            Pattern::Identifier {
+                name,
+                mutable,
+                span,
+            } => {
+                // Add to symbol table
+                self.symbols.insert(
+                    name.clone(),
+                    Symbol {
+                        name: name.clone(),
+                        symbol_type: scrutinee_type.clone(),
+                        mutable: *mutable,
+                        scope_depth: self.scope_depth,
+                        scope_id: self.scope_stack.current(),
+                        origin: ValueOrigin::Local,
+                        decl_line: span.line,
+                    },
+                );
+                // Register with ownership checker
+                let _ = self.ownership.define(name, *mutable, span.line);
+                Ok(())
+            }
+            Pattern::RefBinding { name, span } => {
+                // Add to symbol table
+                self.symbols.insert(
+                    name.clone(),
+                    Symbol {
+                        name: name.clone(),
+                        symbol_type: scrutinee_type.clone(),
+                        mutable: false,
+                        scope_depth: self.scope_depth,
+                        scope_id: self.scope_stack.current(),
+                        origin: ValueOrigin::Local,
+                        decl_line: span.line,
+                    },
+                );
+                // Register with ownership checker (immutable ref binding)
+                let _ = self.ownership.define(name, false, span.line);
+                Ok(())
+            }
+            Pattern::Struct { fields, .. } => {
+                for field in fields {
+                    self.analyze_pattern_bindings(&field.pattern, &ZyraType::Unknown)?;
+                }
+                Ok(())
+            }
+            Pattern::Variant { inner, .. } => {
+                if let Some(inner_pattern) = inner {
+                    self.analyze_pattern_bindings(inner_pattern, &ZyraType::Unknown)?;
+                }
+                Ok(())
+            }
+            Pattern::Tuple { elements, .. } => {
+                for elem in elements {
+                    self.analyze_pattern_bindings(elem, &ZyraType::Unknown)?;
+                }
+                Ok(())
+            }
+            Pattern::Wildcard { .. } | Pattern::Literal { .. } => Ok(()),
+        }
+    }
+
+    /// Check match exhaustiveness (conservative algorithm)
+    fn check_exhaustiveness(
+        arms: &[crate::parser::ast::MatchArm],
+        scrutinee_type: &ZyraType,
+        span: crate::lexer::Span,
+    ) -> ZyraResult<()> {
+        use crate::parser::ast::Pattern;
+
+        // Check for wildcard or catch-all pattern (unconditional)
+        let has_wildcard = arms.iter().any(|arm| {
+            // Guards don't count for exhaustiveness
+            if arm.guard.is_some() {
+                return false;
+            }
+            matches!(
+                &arm.pattern,
+                Pattern::Wildcard { .. } | Pattern::Identifier { .. }
+            )
+        });
+
+        if has_wildcard {
+            return Ok(()); // Exhaustive via wildcard
+        }
+
+        // For enums, check if we have variant patterns
+        // A more complete implementation would count variants against enum definition
+        // For now, we allow enum matching if there are any variant patterns
+        if let ZyraType::Enum(_enum_name) = scrutinee_type {
+            let has_variant_patterns = arms
+                .iter()
+                .any(|arm| matches!(&arm.pattern, Pattern::Variant { .. }));
+
+            if has_variant_patterns {
+                // TODO: In the future, check all variants are covered
+                // For now, allow variant patterns (assume programmer covers all cases)
+                return Ok(());
+            }
+
+            // No variant patterns and no wildcard = definitely non-exhaustive
+            return Err(ZyraError::type_error(
+                "Non-exhaustive match: add a wildcard `_` pattern or cover all enum variants",
+                Some(SourceLocation::new("", span.line, span.column)),
+            ));
+        }
+
+        Ok(())
     }
 
     fn enter_scope(&mut self) {

@@ -636,17 +636,93 @@ impl Compiler {
                         self.bytecode.emit(Instruction::SetField(field.clone()));
                     }
                     Expression::Index { object, index, .. } => {
-                        // For index assignment like `arr[0] = 99`:
-                        // Stack before SetIndex: [value, object, index]
-                        // After SetIndex: [modified_object]
-                        // We need to store it back to the variable
-                        self.compile_expression(object)?;
-                        self.compile_expression(index)?;
-                        self.bytecode.emit(Instruction::SetIndex);
+                        // For nested index assignment like `matrix[0][0] = 10`:
+                        // We need to:
+                        // 1. Collect all indices from innermost to outermost
+                        // 2. Load the root variable
+                        // 3. For each level except the last: GetIndex to navigate deeper
+                        // 4. SetIndex with the value at the deepest level
+                        // 5. Propagate changes back up by SetIndex at each level
+                        // 6. StoreVar back to root
 
-                        // Store the modified object back to the variable
-                        if let Expression::Identifier { name, .. } = object.as_ref() {
-                            self.bytecode.emit(Instruction::StoreVar(name.clone()));
+                        // Collect indices from outermost to innermost
+                        fn collect_indices(
+                            expr: &Expression,
+                            indices: &mut Vec<Expression>,
+                        ) -> Option<String> {
+                            match expr {
+                                Expression::Identifier { name, .. } => Some(name.clone()),
+                                Expression::Index { object, index, .. } => {
+                                    indices.push((**index).clone());
+                                    collect_indices(object, indices)
+                                }
+                                _ => None,
+                            }
+                        }
+
+                        let mut indices = vec![(**index).clone()];
+                        let root_name = collect_indices(object, &mut indices);
+
+                        // Reverse to get from root to deepest
+                        indices.reverse();
+
+                        if let Some(root) = root_name {
+                            // Value is already on stack (compiled before target)
+
+                            if indices.len() == 1 {
+                                // Simple case: arr[i] = value
+                                // Stack: [value]
+                                // Need: [value, arr, i] for SetIndex
+                                self.bytecode.emit(Instruction::LoadVar(root.clone()));
+                                self.compile_expression(&indices[0])?;
+                                self.bytecode.emit(Instruction::SetIndex);
+                                self.bytecode.emit(Instruction::StoreVar(root));
+                            } else {
+                                // Nested case: matrix[i][j] = value (or deeper)
+                                // Stack: [value]
+
+                                // Load root and navigate to second-to-last level
+                                self.bytecode.emit(Instruction::LoadVar(root.clone()));
+                                for idx_expr in &indices[..indices.len() - 1] {
+                                    self.compile_expression(idx_expr)?;
+                                    self.bytecode.emit(Instruction::GetIndex);
+                                }
+                                // Stack: [value, inner_array]
+
+                                // Now set at the deepest level
+                                // We need: [value, inner_array, deepest_index]
+                                // But value is at bottom, inner_array is at top
+                                // We need to reorder: compile index, swap, then SetIndex
+                                self.compile_expression(&indices[indices.len() - 1])?;
+                                // Stack: [value, inner_array, deepest_index]
+                                // But SetIndex expects [value, obj, idx] in order: pop idx, pop obj, pop value
+                                // Our stack: bottom->[value], [inner_array], [deepest_index]<-top
+                                // This is: idx at top, obj below, value at bottom - correct order!
+                                self.bytecode.emit(Instruction::SetIndex);
+                                // Stack: [modified_inner_array]
+
+                                // Now propagate back up - for each level from second-deepest back to root
+                                // We need to: load parent, swap with modified child, set child at index, store
+                                // This is complex - for now let's handle 2-level nesting
+                                // For matrix[i][j], after modifying row, we need to set it back
+
+                                // Load root again, set the modified inner at first index
+                                self.bytecode.emit(Instruction::LoadVar(root.clone()));
+                                // Stack: [modified_inner, matrix]
+                                // We need [modified_inner, matrix, first_index] then swap/reorder for SetIndex
+                                self.compile_expression(&indices[0])?;
+                                // Stack: [modified_inner, matrix, first_index]
+                                // SetIndex pops: idx, obj, value -> gives us modified obj
+                                // But our stack has modified_inner at bottom, not at "value" position
+
+                                // We need to restructure: SetIndex wants [value_to_set, container, index]
+                                // We have [modified_inner, matrix, first_index]
+                                // This is already correct order!
+                                self.bytecode.emit(Instruction::SetIndex);
+                                // Stack: [modified_matrix]
+
+                                self.bytecode.emit(Instruction::StoreVar(root));
+                            }
                         }
                     }
                     _ => {
@@ -703,10 +779,20 @@ impl Compiler {
             }
 
             Expression::List { elements, .. } => {
+                // Array literal [a, b, c] - compiles to Value::Array
                 for elem in elements {
                     self.compile_expression(elem)?;
                 }
                 self.bytecode.emit(Instruction::MakeList(elements.len()));
+                Ok(())
+            }
+
+            Expression::VecLiteral { elements, .. } => {
+                // Vec literal vec[a, b, c] - compiles to Value::Vec
+                for elem in elements {
+                    self.compile_expression(elem)?;
+                }
+                self.bytecode.emit(Instruction::MakeVec(elements.len()));
                 Ok(())
             }
 
@@ -842,7 +928,266 @@ impl Compiler {
                 self.bytecode.emit(Instruction::MakeObject(field_count));
                 Ok(())
             }
+
+            // Match expression: match scrutinee { pattern => body, ... }
+            Expression::Match {
+                scrutinee,
+                arms,
+                span,
+            } => {
+                // Phase 1: Compile scrutinee - leaves value on stack
+                self.compile_expression(scrutinee)?;
+
+                // Store scrutinee in a temp variable for pattern matching
+                let scrutinee_var =
+                    format!("__match_scrutinee_{}", self.bytecode.current_address());
+                self.bytecode
+                    .emit(Instruction::StoreVar(scrutinee_var.clone()));
+
+                // Track jump addresses for patching
+                let mut end_jumps: Vec<usize> = Vec::new();
+
+                // Compile each arm as a chained conditional
+                for (_i, arm) in arms.iter().enumerate() {
+                    // Load scrutinee for pattern check
+                    self.bytecode
+                        .emit(Instruction::LoadVar(scrutinee_var.clone()));
+
+                    // Compile pattern matching check
+                    self.compile_pattern_check(&arm.pattern)?;
+
+                    // If guard present, add guard check
+                    if let Some(ref guard) = arm.guard {
+                        // Only check guard if pattern matched
+                        let skip_guard = self.bytecode.emit(Instruction::JumpIfFalse(0));
+                        self.compile_expression(guard)?;
+                        // Combine pattern match and guard result (already on stack from guard)
+                        let guard_end = self.bytecode.current_address();
+                        self.bytecode.patch_jump(skip_guard, guard_end);
+                    }
+
+                    // Jump to next arm if pattern doesn't match
+                    let jump_to_next = self.bytecode.emit(Instruction::JumpIfFalse(0));
+
+                    // Pattern matched - bind variables and compile body
+                    self.bytecode
+                        .emit(Instruction::LoadVar(scrutinee_var.clone()));
+                    self.compile_pattern_bindings(&arm.pattern)?;
+                    self.compile_expression(&arm.body)?;
+
+                    // Jump to end after successful match
+                    let jump_to_end = self.bytecode.emit(Instruction::Jump(0));
+                    end_jumps.push(jump_to_end);
+
+                    // Patch jump to next arm
+                    let next_arm_addr = self.bytecode.current_address();
+                    self.bytecode.patch_jump(jump_to_next, next_arm_addr);
+                }
+
+                // If no arm matched, push error value (match exhaustiveness should prevent this)
+                self.bytecode.emit(Instruction::LoadConst(Value::None));
+
+                // Patch all end jumps to here
+                let end_addr = self.bytecode.current_address();
+                for jump in end_jumps {
+                    self.bytecode.patch_jump(jump, end_addr);
+                }
+
+                let _ = span; // Mark span as used
+                Ok(())
+            }
+
+            // Type cast expression: expr as Type
+            Expression::Cast {
+                expr, target_type, ..
+            } => {
+                // Compile the expression to cast
+                self.compile_expression(expr)?;
+
+                // Get target type name for VM cast instruction
+                use crate::semantic::types::ZyraType;
+                let target = ZyraType::from_ast_type(target_type);
+                let type_name = target.display_name();
+
+                // Emit cast instruction
+                self.bytecode.emit(Instruction::Cast(type_name));
+                Ok(())
+            }
+
+            // Closure expression: |params| body
+            Expression::Closure { params, body, .. } => {
+                // Generate unique closure function name
+                static CLOSURE_COUNTER: std::sync::atomic::AtomicUsize =
+                    std::sync::atomic::AtomicUsize::new(0);
+                let closure_id = CLOSURE_COUNTER.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                let func_name = format!("__closure_{}", closure_id);
+
+                // Compile closure as a function:
+                // 1. Jump over the closure body (it will be called later)
+                let jump_over = self.bytecode.emit(Instruction::Jump(0));
+
+                // 2. Record function start
+                let func_start = self.bytecode.current_address();
+
+                // 3. Enter scope and store parameters
+                self.bytecode.emit(Instruction::EnterScope);
+
+                // Store params in reverse order (they're on stack from caller)
+                for param in params.iter().rev() {
+                    self.bytecode
+                        .emit(Instruction::StoreVar(param.name.clone()));
+                }
+
+                // 4. Compile closure body
+                self.compile_expression(body)?;
+
+                // 5. Return (exit scope and return to caller)
+                self.bytecode.emit(Instruction::ExitScope);
+                self.bytecode.emit(Instruction::Return);
+
+                // 6. Record function end
+                let func_end = self.bytecode.current_address();
+
+                // 7. Patch jump to skip over closure body
+                self.bytecode.patch_jump(jump_over, func_end);
+
+                // 8. Register closure as a function
+                self.bytecode.functions.insert(
+                    func_name.clone(),
+                    FunctionDef {
+                        name: func_name.clone(),
+                        params: params.iter().map(|p| p.name.clone()).collect(),
+                        start_address: func_start,
+                        end_address: func_end,
+                    },
+                );
+
+                // 9. Emit MakeClosure instruction to create the closure value
+                self.bytecode.emit(Instruction::MakeClosure {
+                    func_name,
+                    param_count: params.len(),
+                });
+
+                Ok(())
+            }
         }
+    }
+
+    /// Compile pattern matching check - leaves bool on stack
+    fn compile_pattern_check(&mut self, pattern: &crate::parser::ast::Pattern) -> ZyraResult<()> {
+        use crate::parser::ast::Pattern;
+        match pattern {
+            Pattern::Wildcard { .. } => {
+                // Wildcard always matches
+                self.bytecode.emit(Instruction::Pop); // Remove scrutinee
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::Bool(true)));
+            }
+            Pattern::Identifier { .. } => {
+                // Simple binding always matches
+                self.bytecode.emit(Instruction::Pop);
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::Bool(true)));
+            }
+            Pattern::RefBinding { .. } => {
+                // Ref binding always matches
+                self.bytecode.emit(Instruction::Pop);
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::Bool(true)));
+            }
+            Pattern::Literal { value, .. } => {
+                // Compare with literal
+                use crate::parser::ast::LiteralPattern;
+                match value {
+                    LiteralPattern::Int(n) => {
+                        self.bytecode.emit(Instruction::LoadConst(Value::Int(*n)));
+                    }
+                    LiteralPattern::Float(f) => {
+                        self.bytecode.emit(Instruction::LoadConst(Value::Float(*f)));
+                    }
+                    LiteralPattern::Bool(b) => {
+                        self.bytecode.emit(Instruction::LoadConst(Value::Bool(*b)));
+                    }
+                    LiteralPattern::Char(c) => {
+                        self.bytecode.emit(Instruction::LoadConst(Value::Char(*c)));
+                    }
+                    LiteralPattern::String(s) => {
+                        self.bytecode
+                            .emit(Instruction::LoadConst(Value::String(s.clone())));
+                    }
+                }
+                self.bytecode.emit(Instruction::Eq);
+            }
+            Pattern::Variant { variant, inner, .. } => {
+                // Check if scrutinee._type ends with variant name
+                self.bytecode
+                    .emit(Instruction::GetField("_type".to_string()));
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::String(variant.clone())));
+                self.bytecode.emit(Instruction::StrContains);
+                // TODO: Check inner pattern if present
+                let _ = inner;
+            }
+            Pattern::Struct { type_name, .. } => {
+                // Check if scrutinee._type matches struct type
+                self.bytecode
+                    .emit(Instruction::GetField("_type".to_string()));
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::String(type_name.clone())));
+                self.bytecode.emit(Instruction::Eq);
+            }
+            Pattern::Tuple { .. } => {
+                // TODO: Tuple pattern matching
+                self.bytecode.emit(Instruction::Pop);
+                self.bytecode
+                    .emit(Instruction::LoadConst(Value::Bool(true)));
+            }
+        }
+        Ok(())
+    }
+
+    /// Compile pattern variable bindings
+    fn compile_pattern_bindings(
+        &mut self,
+        pattern: &crate::parser::ast::Pattern,
+    ) -> ZyraResult<()> {
+        use crate::parser::ast::Pattern;
+        match pattern {
+            Pattern::Identifier { name, .. } => {
+                // Bind the value to the variable name
+                self.bytecode.emit(Instruction::StoreVar(name.clone()));
+            }
+            Pattern::RefBinding { name, .. } => {
+                // Bind as reference (same as regular for now)
+                self.bytecode.emit(Instruction::StoreVar(name.clone()));
+            }
+            Pattern::Struct { fields, .. } => {
+                // Extract and bind each field
+                for field in fields {
+                    // Duplicate scrutinee for each field
+                    self.bytecode.emit(Instruction::Dup);
+                    self.bytecode
+                        .emit(Instruction::GetField(field.field_name.clone()));
+                    self.compile_pattern_bindings(&field.pattern)?;
+                }
+                self.bytecode.emit(Instruction::Pop); // Remove final scrutinee copy
+            }
+            Pattern::Variant { inner, .. } => {
+                if let Some(inner_pattern) = inner {
+                    // Extract _data and bind
+                    self.bytecode
+                        .emit(Instruction::GetField("_data".to_string()));
+                    self.compile_pattern_bindings(inner_pattern)?;
+                } else {
+                    self.bytecode.emit(Instruction::Pop);
+                }
+            }
+            _ => {
+                // Wildcard, Literal, Tuple - no bindings
+                self.bytecode.emit(Instruction::Pop);
+            }
+        }
+        Ok(())
     }
 }
 

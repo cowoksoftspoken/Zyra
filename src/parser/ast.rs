@@ -112,6 +112,23 @@ pub struct Parameter {
     pub span: Span,
 }
 
+/// Closure parameter (may have optional type annotation)
+#[derive(Debug, Clone)]
+pub struct ClosureParam {
+    pub name: String,
+    pub param_type: Option<Type>,
+    pub span: Span,
+}
+
+/// How the closure captures variables from enclosing scope
+#[derive(Debug, Clone, PartialEq)]
+pub enum CaptureMode {
+    /// Capture by reference (default)
+    Borrow,
+    /// Take ownership of captured variables (move keyword)
+    Move,
+}
+
 /// Block of statements with optional trailing expression
 #[derive(Debug, Clone)]
 pub struct Block {
@@ -210,8 +227,14 @@ pub enum Expression {
         span: Span,
     },
 
-    /// List literal: [a, b, c]
+    /// List literal (Array): [a, b, c]
     List {
+        elements: Vec<Expression>,
+        span: Span,
+    },
+
+    /// Vec literal (dynamic): vec[a, b, c]
+    VecLiteral {
         elements: Vec<Expression>,
         span: Span,
     },
@@ -264,6 +287,29 @@ pub enum Expression {
         data: Option<Box<Expression>>,
         span: Span,
     },
+
+    /// Match expression: match expr { pattern => body, ... }
+    Match {
+        scrutinee: Box<Expression>,
+        arms: Vec<MatchArm>,
+        span: Span,
+    },
+
+    /// Type cast expression: expr as Type
+    Cast {
+        expr: Box<Expression>,
+        target_type: Type,
+        span: Span,
+    },
+
+    /// Closure expression: |params| body or move |params| body
+    Closure {
+        params: Vec<ClosureParam>,
+        return_type: Option<Type>,
+        body: Box<Expression>,
+        capture_mode: CaptureMode,
+        span: Span,
+    },
 }
 
 impl Expression {
@@ -282,6 +328,7 @@ impl Expression {
             Expression::FieldAccess { span, .. } => *span,
             Expression::Index { span, .. } => *span,
             Expression::List { span, .. } => *span,
+            Expression::VecLiteral { span, .. } => *span,
             Expression::Object { span, .. } => *span,
             Expression::Reference { span, .. } => *span,
             Expression::Dereference { span, .. } => *span,
@@ -290,8 +337,81 @@ impl Expression {
             Expression::If { span, .. } => *span,
             Expression::StructInit { span, .. } => *span,
             Expression::EnumVariant { span, .. } => *span,
+            Expression::Match { span, .. } => *span,
+            Expression::Cast { span, .. } => *span,
+            Expression::Closure { span, .. } => *span,
         }
     }
+}
+
+// =============================================================================
+// PATTERN MATCHING TYPES
+// =============================================================================
+
+/// Pattern for match expressions
+#[derive(Debug, Clone)]
+pub enum Pattern {
+    /// Wildcard pattern: _
+    Wildcard { span: Span },
+
+    /// Simple binding: x (moves value)
+    Identifier {
+        name: String,
+        mutable: bool,
+        span: Span,
+    },
+
+    /// Reference binding: ref x (borrows value)
+    RefBinding { name: String, span: Span },
+
+    /// Literal pattern: 42, "hello", true
+    Literal { value: LiteralPattern, span: Span },
+
+    /// Struct destructuring: Point { x, y } or Point { x, .. }
+    Struct {
+        type_name: String,
+        fields: Vec<FieldPattern>,
+        rest: bool, // true if .. is present
+        span: Span,
+    },
+
+    /// Enum variant: Some(x), None, Result::Ok(v)
+    Variant {
+        enum_name: Option<String>, // None for inferred (e.g., Some)
+        variant: String,
+        inner: Option<Box<Pattern>>,
+        span: Span,
+    },
+
+    /// Tuple pattern: (a, b, c)
+    Tuple { elements: Vec<Pattern>, span: Span },
+}
+
+/// Literal values in patterns
+#[derive(Debug, Clone)]
+pub enum LiteralPattern {
+    Int(i64),
+    Float(f64),
+    Bool(bool),
+    Char(char),
+    String(String),
+}
+
+/// Field pattern for struct destructuring
+#[derive(Debug, Clone)]
+pub struct FieldPattern {
+    pub field_name: String,
+    pub pattern: Pattern, // Can be nested for deep destructuring
+    pub span: Span,
+}
+
+/// Match arm: pattern [if guard] => body
+#[derive(Debug, Clone)]
+pub struct MatchArm {
+    pub pattern: Pattern,
+    pub guard: Option<Box<Expression>>, // if condition
+    pub body: Expression,
+    pub span: Span,
 }
 
 /// Binary operators

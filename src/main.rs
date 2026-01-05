@@ -20,6 +20,77 @@ use zyra::resolver::ModuleResolver;
 use zyra::semantic::SemanticAnalyzer;
 use zyra::vm::VM;
 
+/// Project configuration from zyra.toml
+struct ProjectConfig {
+    main_entry: String,
+    output: String,
+}
+
+/// Find zyra.toml in current directory and parse it
+fn find_project_config() -> Option<ProjectConfig> {
+    let toml_path = Path::new("zyra.toml");
+    if !toml_path.exists() {
+        return None;
+    }
+
+    let content = fs::read_to_string(toml_path).ok()?;
+
+    // Simple TOML parsing for main_entry and output
+    let mut main_entry = String::from("main.zr");
+    let mut output = String::from("./");
+
+    for line in content.lines() {
+        let line = line.trim();
+        if line.starts_with("main_entry") {
+            if let Some(value) = line.split('=').nth(1) {
+                main_entry = value.trim().trim_matches('"').to_string();
+            }
+        }
+        if line.starts_with("output") {
+            if let Some(value) = line.split('=').nth(1) {
+                output = value.trim().trim_matches('"').to_string();
+            }
+        }
+    }
+
+    // Validate main_entry has valid extension
+    if !main_entry.ends_with(".zr") && !main_entry.ends_with(".zy") && !main_entry.ends_with(".za")
+    {
+        eprintln!(
+            "{}: main_entry must be main.zr, main.zy, or main.za",
+            "ConfigError".red()
+        );
+        return None;
+    }
+
+    Some(ProjectConfig { main_entry, output })
+}
+
+/// Get the main entry file, either from arg or zyra.toml
+fn get_main_entry(args: &[String], arg_index: usize) -> Option<String> {
+    // If file argument provided, use it
+    if args.len() > arg_index {
+        return Some(args[arg_index].clone());
+    }
+
+    // Otherwise check for zyra.toml
+    if let Some(config) = find_project_config() {
+        let entry_path = Path::new(&config.main_entry);
+        if entry_path.exists() {
+            return Some(config.main_entry);
+        } else {
+            eprintln!(
+                "{}: main_entry '{}' not found",
+                "ConfigError".red(),
+                config.main_entry
+            );
+            return None;
+        }
+    }
+
+    None
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
 
@@ -31,35 +102,45 @@ fn main() {
     let command = &args[1];
 
     match command.as_str() {
-        "run" => {
-            if args.len() < 3 {
-                eprintln!("{}", "Error: Missing file argument".red());
+        "run" => match get_main_entry(&args, 2) {
+            Some(file) => run_file(&file),
+            None => {
+                eprintln!(
+                    "{}",
+                    "Error: No file specified and no zyra.toml found".red()
+                );
                 eprintln!("Usage: zyra run <file.zr>");
+                eprintln!("  Or create a project with: zyra init <name>");
                 process::exit(1);
             }
-            run_file(&args[2]);
-        }
-        "check" => {
-            if args.len() < 3 {
-                eprintln!("{}", "Error: Missing file argument".red());
+        },
+        "check" => match get_main_entry(&args, 2) {
+            Some(file) => check_file(&file),
+            None => {
+                eprintln!(
+                    "{}",
+                    "Error: No file specified and no zyra.toml found".red()
+                );
                 eprintln!("Usage: zyra check <file.zr>");
                 process::exit(1);
             }
-            check_file(&args[2]);
-        }
-        "build" | "compile" => {
-            if args.len() < 3 {
-                eprintln!("{}", "Error: Missing file argument".red());
+        },
+        "build" | "compile" => match get_main_entry(&args, 2) {
+            Some(file) => build_file(&file),
+            None => {
+                eprintln!(
+                    "{}",
+                    "Error: No file specified and no zyra.toml found".red()
+                );
                 eprintln!("Usage: zyra compile <file.zr>");
                 process::exit(1);
             }
-            build_file(&args[2]);
-        }
+        },
         "help" | "--help" | "-h" => {
             print_usage();
         }
         "version" | "--version" | "-v" => {
-            println!("{}", "Zyra Programming Language v0.1.0".cyan().bold());
+            println!("{}", "Zyra Programming Language v1.0.0".cyan().bold());
         }
         "init" => {
             let name = args.get(2).map(|s| s.as_str()).unwrap_or(".");
@@ -82,7 +163,7 @@ fn main() {
 }
 
 fn print_usage() {
-    println!("{}", "Zyra Programming Language v0.1.0".cyan().bold());
+    println!("{}", "Zyra Programming Language v1.0.0".cyan().bold());
     println!();
     println!("{}", "Usage:".yellow().bold());
     println!(
@@ -319,7 +400,33 @@ fn build_file_internal(path: &str) -> Result<String, ZyraError> {
     let bytecode = compiler.compile(&ast)?;
 
     // Write bytecode to file
-    let output_path = Path::new(path).with_extension("zyc");
+    let mut output_path = Path::new(path).with_extension("zyc");
+
+    // Check for project config output directory
+    if let Some(config) = find_project_config() {
+        let out_dir = Path::new(&config.output);
+        if out_dir != Path::new("./") && out_dir != Path::new(".") {
+            // Create output directory if it doesn't exist
+            if !out_dir.exists() {
+                fs::create_dir_all(out_dir).map_err(|e| {
+                    ZyraError::new(
+                        "FileError",
+                        &format!(
+                            "Could not create output directory '{}': {}",
+                            config.output, e
+                        ),
+                        None,
+                    )
+                })?;
+            }
+
+            // Construct new path: output_dir + filename.zyc
+            if let Some(filename) = output_path.file_name() {
+                output_path = out_dir.join(filename);
+            }
+        }
+    }
+
     let output_str = output_path.to_string_lossy().to_string();
 
     // Serialize bytecode (simple binary format)
@@ -405,13 +512,18 @@ func main() {{
 name = "{}"
 version = "0.1.0"
 edition = "2025"
+zyra = ">=1.0.0"
+description = "-"
+authors = "-"
+license = ["MIT"]
 
 [dependencies]
 # Add dependencies here
 # not supported yet
 
 [build]
-entry = "main.zr"
+main_entry = "main.zr"
+output = "./"
 "#,
         project_name
     );

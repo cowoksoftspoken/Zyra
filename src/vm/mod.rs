@@ -63,45 +63,38 @@ impl VM {
     }
 
     /// Run bytecode program
+    /// IMPORTANT: Only main() is executed - no code outside functions runs
     pub fn run(&mut self, bytecode: &Bytecode) -> ZyraResult<Option<Value>> {
         self.ip = 0;
         self.halted = false;
 
-        // Skip function definitions (they're registered but not executed sequentially)
-        // Find the first non-function instruction
-        for (i, _instr) in bytecode.instructions.iter().enumerate() {
-            let in_function = bytecode
-                .functions
-                .values()
-                .any(|f| i >= f.start_address && i < f.end_address);
-            if !in_function {
-                self.ip = i;
-                break;
-            }
-        }
+        // *** MAIN-ONLY EXECUTION ***
+        // Programs must have a main() function as the entry point.
+        // No code outside functions is executed - stack starts clean from main().
 
-        while self.ip < bytecode.instructions.len() && !self.halted {
-            let instruction = bytecode.instructions[self.ip].clone();
-
-            // If we hit Halt and main() exists but hasn't been called, call it first
-            if matches!(instruction, Instruction::Halt) {
-                if !self.main_called {
-                    if let Some(main_func) = bytecode.functions.get("main") {
-                        // Check if main has no parameters (valid entry point)
-                        if main_func.params.is_empty() {
-                            // Mark main as called to prevent double-execution
-                            self.main_called = true;
-                            // Call main function
-                            self.call_function(main_func, Vec::new())?;
-                            // Continue execution (don't execute Halt yet)
-                            continue;
-                        }
-                    }
-                }
+        if let Some(main_func) = bytecode.functions.get("main") {
+            // Verify main has no parameters (valid entry point)
+            if !main_func.params.is_empty() {
+                return Err(ZyraError::runtime_error(
+                    "main() function must not have parameters.",
+                ));
             }
 
-            self.ip += 1;
-            self.execute_instruction(&instruction, bytecode)?;
+            // Mark main as called and execute it
+            self.main_called = true;
+            self.call_function(main_func, Vec::new())?;
+
+            // Execute instructions starting from main's body
+            while self.ip < bytecode.instructions.len() && !self.halted {
+                let instruction = bytecode.instructions[self.ip].clone();
+                self.ip += 1;
+                self.execute_instruction(&instruction, bytecode)?;
+            }
+        } else {
+            // No main function found - error
+            return Err(ZyraError::runtime_error(
+                "No 'main' function found. Programs must have a 'func main() { ... }' as entry point.",
+            ));
         }
 
         // Return top of stack if any
@@ -132,11 +125,7 @@ impl VM {
 
             Instruction::StoreVar(name) => {
                 let value = self.pop()?;
-                // Note: set_variable overwrites old. We need to handle old value decrement inside set_variable
-                // OR we check here? set_variable logic handles scopes.
-                // We should update set_variable (helper) instead of here if possible,
-                // but if we do it here, we might miss other calls.
-                // Let's rely on updated set_variable (Task: Update set_variable next).
+                // set_variable handles ref counting: decrements old value's ref if Ref
                 self.set_variable(name, value);
             }
 
@@ -441,58 +430,290 @@ impl VM {
                 }
                 args.reverse();
 
-                // Check for built-in functions first
-                if let Some(result) = self.stdlib.call(name, &args)? {
-                    self.stack.push(result);
-                } else if let Some(func) = bytecode.functions.get(name) {
-                    // User-defined function
-                    self.call_function(func, args)?;
-                } else if name.contains('.') {
-                    // Method call: try to dispatch dynamically based on object's _type
-                    // Format: "var.method" - use first arg to find type
-                    if let Some(method_name) = name.split('.').last() {
-                        if !args.is_empty() {
-                            if let Value::Object(fields) = &args[0] {
-                                if let Some(Value::String(type_name)) = fields.get("_type") {
-                                    let full_method_name =
-                                        format!("{}::{}", type_name, method_name);
-                                    if let Some(func) = bytecode.functions.get(&full_method_name) {
-                                        self.call_function(func, args)?;
+                // Handle higher-order functions that need closure invocation
+                match name.as_str() {
+                    "vec_map" => {
+                        // vec_map(array, closure) -> new array with closure applied to each element
+                        if args.len() >= 2 {
+                            let (arr, is_vec) = match &args[0] {
+                                Value::Array(a) => (a.clone(), false),
+                                Value::Vec(a) => (a.clone(), true),
+                                _ => {
+                                    return Err(ZyraError::runtime_error(
+                                        "vec_map: first argument must be an array or vec",
+                                    ))
+                                }
+                            };
+                            let closure = &args[1];
+                            let mut result = Vec::new();
+                            for item in arr {
+                                let mapped =
+                                    self.call_closure_with_value(closure, vec![item], bytecode)?;
+                                result.push(mapped);
+                            }
+                            // Preserve input type in output
+                            if is_vec {
+                                self.stack.push(Value::Vec(result));
+                            } else {
+                                self.stack.push(Value::Array(result));
+                            }
+                        } else {
+                            return Err(ZyraError::runtime_error(
+                                "vec_map requires 2 arguments: array and closure",
+                            ));
+                        }
+                    }
+                    "vec_filter" => {
+                        // vec_filter(array, closure) -> new array with elements where closure returns true
+                        if args.len() >= 2 {
+                            let (arr, is_vec) = match &args[0] {
+                                Value::Array(a) => (a.clone(), false),
+                                Value::Vec(a) => (a.clone(), true),
+                                _ => {
+                                    return Err(ZyraError::runtime_error(
+                                        "vec_filter: first argument must be an array or vec",
+                                    ))
+                                }
+                            };
+                            let closure = &args[1];
+                            let mut result = Vec::new();
+                            for item in arr {
+                                let keep = self.call_closure_with_value(
+                                    closure,
+                                    vec![item.clone()],
+                                    bytecode,
+                                )?;
+                                if keep.is_truthy() {
+                                    result.push(item);
+                                }
+                            }
+                            // Preserve input type in output
+                            if is_vec {
+                                self.stack.push(Value::Vec(result));
+                            } else {
+                                self.stack.push(Value::Array(result));
+                            }
+                        } else {
+                            return Err(ZyraError::runtime_error(
+                                "vec_filter requires 2 arguments: array and closure",
+                            ));
+                        }
+                    }
+                    "vec_fold" => {
+                        // vec_fold(array, initial, closure) -> reduced value
+                        if args.len() >= 3 {
+                            let arr = match &args[0] {
+                                Value::Array(a) => a.clone(),
+                                Value::Vec(a) => a.clone(),
+                                _ => {
+                                    return Err(ZyraError::runtime_error(
+                                        "vec_fold: first argument must be an array or vec",
+                                    ))
+                                }
+                            };
+                            let mut acc = args[1].clone();
+                            let closure = &args[2];
+                            for item in arr {
+                                acc = self.call_closure_with_value(
+                                    closure,
+                                    vec![acc, item],
+                                    bytecode,
+                                )?;
+                            }
+                            self.stack.push(acc);
+                        } else {
+                            return Err(ZyraError::runtime_error(
+                                "vec_fold requires 3 arguments: array, initial, closure",
+                            ));
+                        }
+                    }
+                    "vec_foreach" => {
+                        // vec_foreach(array, closure) -> executes closure for each element
+                        if args.len() >= 2 {
+                            let arr = match &args[0] {
+                                Value::Array(a) => a.clone(),
+                                Value::Vec(a) => a.clone(),
+                                _ => {
+                                    return Err(ZyraError::runtime_error(
+                                        "vec_foreach: first argument must be an array or vec",
+                                    ))
+                                }
+                            };
+                            let closure = &args[1];
+                            for item in arr {
+                                self.call_closure_with_value(closure, vec![item], bytecode)?;
+                            }
+                            self.stack.push(Value::None);
+                        } else {
+                            return Err(ZyraError::runtime_error(
+                                "vec_foreach requires 2 arguments: array and closure",
+                            ));
+                        }
+                    }
+                    "vec_find" => {
+                        // vec_find(array, closure) -> first element where closure returns true, or None
+                        if args.len() >= 2 {
+                            let arr = match &args[0] {
+                                Value::Array(a) => a.clone(),
+                                Value::Vec(a) => a.clone(),
+                                _ => {
+                                    return Err(ZyraError::runtime_error(
+                                        "vec_find: first argument must be an array or vec",
+                                    ))
+                                }
+                            };
+                            let closure = &args[1];
+                            let mut found = Value::None;
+                            for item in arr {
+                                let matches = self.call_closure_with_value(
+                                    closure,
+                                    vec![item.clone()],
+                                    bytecode,
+                                )?;
+                                if matches.is_truthy() {
+                                    found = item;
+                                    break;
+                                }
+                            }
+                            self.stack.push(found);
+                        } else {
+                            return Err(ZyraError::runtime_error(
+                                "vec_find requires 2 arguments: array and closure",
+                            ));
+                        }
+                    }
+                    "vec_any" => {
+                        // vec_any(array, closure) -> true if closure returns true for any element
+                        if args.len() >= 2 {
+                            let arr = match &args[0] {
+                                Value::Array(a) => a.clone(),
+                                Value::Vec(a) => a.clone(),
+                                _ => {
+                                    return Err(ZyraError::runtime_error(
+                                        "vec_any: first argument must be an array or vec",
+                                    ))
+                                }
+                            };
+                            let closure = &args[1];
+                            let mut any_true = false;
+                            for item in arr {
+                                let matches =
+                                    self.call_closure_with_value(closure, vec![item], bytecode)?;
+                                if matches.is_truthy() {
+                                    any_true = true;
+                                    break;
+                                }
+                            }
+                            self.stack.push(Value::Bool(any_true));
+                        } else {
+                            return Err(ZyraError::runtime_error(
+                                "vec_any requires 2 arguments: array and closure",
+                            ));
+                        }
+                    }
+                    "vec_all" => {
+                        // vec_all(array, closure) -> true if closure returns true for all elements
+                        if args.len() >= 2 {
+                            let arr = match &args[0] {
+                                Value::Array(a) => a.clone(),
+                                Value::Vec(a) => a.clone(),
+                                _ => {
+                                    return Err(ZyraError::runtime_error(
+                                        "vec_all: first argument must be an array or vec",
+                                    ))
+                                }
+                            };
+                            let closure = &args[1];
+                            let mut all_true = true;
+                            for item in arr {
+                                let matches =
+                                    self.call_closure_with_value(closure, vec![item], bytecode)?;
+                                if !matches.is_truthy() {
+                                    all_true = false;
+                                    break;
+                                }
+                            }
+                            self.stack.push(Value::Bool(all_true));
+                        } else {
+                            return Err(ZyraError::runtime_error(
+                                "vec_all requires 2 arguments: array and closure",
+                            ));
+                        }
+                    }
+                    _ => {
+                        // Check for built-in functions first
+                        if let Some(result) = self.stdlib.call(name, &args)? {
+                            self.stack.push(result);
+                        } else if let Some(func) = bytecode.functions.get(name) {
+                            // User-defined function
+                            self.call_function(func, args)?;
+                        } else if name.contains('.') {
+                            // Method call: try to dispatch dynamically based on object's _type
+                            // Format: "var.method" - use first arg to find type
+                            if let Some(method_name) = name.split('.').last() {
+                                if !args.is_empty() {
+                                    if let Value::Object(fields) = &args[0] {
+                                        if let Some(Value::String(type_name)) = fields.get("_type")
+                                        {
+                                            let full_method_name =
+                                                format!("{}::{}", type_name, method_name);
+                                            if let Some(func) =
+                                                bytecode.functions.get(&full_method_name)
+                                            {
+                                                self.call_function(func, args)?;
+                                            } else {
+                                                return Err(ZyraError::runtime_error(&format!(
+                                                    "Unknown method: '{}'",
+                                                    full_method_name
+                                                )));
+                                            }
+                                        } else {
+                                            return Err(ZyraError::runtime_error(&format!(
+                                                "Cannot call method '{}' on non-struct value",
+                                                name
+                                            )));
+                                        }
                                     } else {
                                         return Err(ZyraError::runtime_error(&format!(
-                                            "Unknown method: '{}'",
-                                            full_method_name
+                                            "Cannot call method '{}' on non-struct value",
+                                            name
                                         )));
                                     }
                                 } else {
                                     return Err(ZyraError::runtime_error(&format!(
-                                        "Cannot call method '{}' on non-struct value",
+                                        "Method call '{}' requires a receiver",
                                         name
                                     )));
                                 }
                             } else {
                                 return Err(ZyraError::runtime_error(&format!(
-                                    "Cannot call method '{}' on non-struct value",
+                                    "Unknown function: '{}'",
                                     name
                                 )));
                             }
+                        } else if let Ok(closure_val) = self.get_variable(name) {
+                            // Check if it's a closure variable
+                            match closure_val {
+                                Value::Closure { .. } => {
+                                    let result =
+                                        self.call_closure_with_value(&closure_val, args, bytecode)?;
+                                    self.stack.push(result);
+                                }
+                                _ => {
+                                    return Err(ZyraError::runtime_error(&format!(
+                                        "Variable '{}' is not callable (type: {})",
+                                        name,
+                                        closure_val.type_name()
+                                    )));
+                                }
+                            }
                         } else {
                             return Err(ZyraError::runtime_error(&format!(
-                                "Method call '{}' requires a receiver",
+                                "Unknown function: '{}'",
                                 name
                             )));
                         }
-                    } else {
-                        return Err(ZyraError::runtime_error(&format!(
-                            "Unknown function: '{}'",
-                            name
-                        )));
                     }
-                } else {
-                    return Err(ZyraError::runtime_error(&format!(
-                        "Unknown function: '{}'",
-                        name
-                    )));
                 }
             }
 
@@ -509,6 +730,148 @@ impl VM {
                 // Pop the receiver (first argument is the struct)
                 let receiver = self.pop()?;
 
+                // ===== ARRAY/VEC HOF METHODS =====
+                // Handle method calls on Array and Vec types (map, filter, fold, etc.)
+                match (&receiver, method_name.as_str()) {
+                    (Value::Array(arr), "map") | (Value::Vec(arr), "map") => {
+                        if args.is_empty() {
+                            return Err(ZyraError::runtime_error(
+                                "map requires a closure argument",
+                            ));
+                        }
+                        let closure = &args[0];
+                        let is_vec = matches!(&receiver, Value::Vec(_));
+                        let mut result = Vec::new();
+                        for item in arr.clone() {
+                            let mapped =
+                                self.call_closure_with_value(closure, vec![item], bytecode)?;
+                            result.push(mapped);
+                        }
+                        if is_vec {
+                            self.stack.push(Value::Vec(result));
+                        } else {
+                            self.stack.push(Value::Array(result));
+                        }
+                        return Ok(());
+                    }
+                    (Value::Array(arr), "filter") | (Value::Vec(arr), "filter") => {
+                        if args.is_empty() {
+                            return Err(ZyraError::runtime_error(
+                                "filter requires a closure argument",
+                            ));
+                        }
+                        let closure = &args[0];
+                        let is_vec = matches!(&receiver, Value::Vec(_));
+                        let mut result = Vec::new();
+                        for item in arr.clone() {
+                            let keep = self.call_closure_with_value(
+                                closure,
+                                vec![item.clone()],
+                                bytecode,
+                            )?;
+                            if keep.is_truthy() {
+                                result.push(item);
+                            }
+                        }
+                        if is_vec {
+                            self.stack.push(Value::Vec(result));
+                        } else {
+                            self.stack.push(Value::Array(result));
+                        }
+                        return Ok(());
+                    }
+                    (Value::Array(arr), "fold") | (Value::Vec(arr), "fold") => {
+                        if args.len() < 2 {
+                            return Err(ZyraError::runtime_error(
+                                "fold requires initial value and closure arguments",
+                            ));
+                        }
+                        let mut acc = args[0].clone();
+                        let closure = &args[1];
+                        for item in arr.clone() {
+                            acc =
+                                self.call_closure_with_value(closure, vec![acc, item], bytecode)?;
+                        }
+                        self.stack.push(acc);
+                        return Ok(());
+                    }
+                    (Value::Array(arr), "forEach") | (Value::Vec(arr), "forEach") => {
+                        if args.is_empty() {
+                            return Err(ZyraError::runtime_error(
+                                "forEach requires a closure argument",
+                            ));
+                        }
+                        let closure = &args[0];
+                        for item in arr.clone() {
+                            self.call_closure_with_value(closure, vec![item], bytecode)?;
+                        }
+                        self.stack.push(Value::None);
+                        return Ok(());
+                    }
+                    (Value::Array(arr), "find") | (Value::Vec(arr), "find") => {
+                        if args.is_empty() {
+                            return Err(ZyraError::runtime_error(
+                                "find requires a closure argument",
+                            ));
+                        }
+                        let closure = &args[0];
+                        let mut found = Value::None;
+                        for item in arr.clone() {
+                            let matches = self.call_closure_with_value(
+                                closure,
+                                vec![item.clone()],
+                                bytecode,
+                            )?;
+                            if matches.is_truthy() {
+                                found = item;
+                                break;
+                            }
+                        }
+                        self.stack.push(found);
+                        return Ok(());
+                    }
+                    (Value::Array(arr), "any") | (Value::Vec(arr), "any") => {
+                        if args.is_empty() {
+                            return Err(ZyraError::runtime_error(
+                                "any requires a closure argument",
+                            ));
+                        }
+                        let closure = &args[0];
+                        let mut found = false;
+                        for item in arr.clone() {
+                            let matches =
+                                self.call_closure_with_value(closure, vec![item], bytecode)?;
+                            if matches.is_truthy() {
+                                found = true;
+                                break;
+                            }
+                        }
+                        self.stack.push(Value::Bool(found));
+                        return Ok(());
+                    }
+                    (Value::Array(arr), "all") | (Value::Vec(arr), "all") => {
+                        if args.is_empty() {
+                            return Err(ZyraError::runtime_error(
+                                "all requires a closure argument",
+                            ));
+                        }
+                        let closure = &args[0];
+                        let mut all_match = true;
+                        for item in arr.clone() {
+                            let matches =
+                                self.call_closure_with_value(closure, vec![item], bytecode)?;
+                            if !matches.is_truthy() {
+                                all_match = false;
+                                break;
+                            }
+                        }
+                        self.stack.push(Value::Bool(all_match));
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+
+                // ===== OBJECT/STRUCT METHODS =====
                 // Get the type from the receiver's _type field
                 // Handle both Value::Ref (heap-allocated) and Value::Object (legacy)
                 let type_name_opt = match &receiver {
@@ -648,7 +1011,16 @@ impl VM {
                     elements.push(self.pop()?);
                 }
                 elements.reverse();
-                self.stack.push(Value::List(elements));
+                self.stack.push(Value::Array(elements));
+            }
+
+            Instruction::MakeVec(count) => {
+                let mut elements = Vec::new();
+                for _ in 0..*count {
+                    elements.push(self.pop()?);
+                }
+                elements.reverse();
+                self.stack.push(Value::Vec(elements));
             }
 
             Instruction::MakeObject(count) => {
@@ -704,7 +1076,7 @@ impl VM {
                         "len" => self.stack.push(Value::Int(s.len() as i64)),
                         _ => self.stack.push(Value::None),
                     },
-                    Value::List(l) => match field.as_str() {
+                    Value::Array(l) | Value::Vec(l) => match field.as_str() {
                         "len" | "length" => self.stack.push(Value::Int(l.len() as i64)),
                         _ => self.stack.push(Value::None),
                     },
@@ -751,13 +1123,13 @@ impl VM {
                 let obj = self.pop()?;
 
                 match (&obj, &index) {
-                    (Value::List(list), Value::Int(i)) => {
+                    (Value::Array(list), Value::Int(i)) | (Value::Vec(list), Value::Int(i)) => {
                         let idx = *i as usize;
                         if idx < list.len() {
                             self.stack.push(list[idx].clone());
                         } else {
                             return Err(ZyraError::runtime_error(&format!(
-                                "Index {} out of bounds for list of length {}",
+                                "Index {} out of bounds for array of length {}",
                                 i,
                                 list.len()
                             )));
@@ -791,7 +1163,12 @@ impl VM {
                 let mut obj = self.pop()?;
                 let value = self.pop()?;
 
-                if let (Value::List(ref mut list), Value::Int(i)) = (&mut obj, &index) {
+                if let (Value::Array(ref mut list), Value::Int(i)) = (&mut obj, &index) {
+                    let idx = *i as usize;
+                    if idx < list.len() {
+                        list[idx] = value;
+                    }
+                } else if let (Value::Vec(ref mut list), Value::Int(i)) = (&mut obj, &index) {
                     let idx = *i as usize;
                     if idx < list.len() {
                         list[idx] = value;
@@ -868,8 +1245,48 @@ impl VM {
                 self.remove_variable(&borrower);
             }
 
+            // Pattern matching support
+            Instruction::Dup => {
+                // Duplicate top of stack
+                if let Some(top) = self.stack.last().cloned() {
+                    if let Value::Ref(id) = &top {
+                        let _ = self.heap.inc_ref(*id);
+                    }
+                    self.stack.push(top);
+                }
+            }
+
+            Instruction::StrContains => {
+                // Check if string contains substring: [haystack, needle] => bool
+                let needle = self.pop()?;
+                let haystack = self.pop()?;
+                let result = match (&haystack, &needle) {
+                    (Value::String(h), Value::String(n)) => Value::Bool(h.contains(n.as_str())),
+                    _ => Value::Bool(false),
+                };
+                self.stack.push(result);
+            }
+
             Instruction::Halt => {
                 self.halted = true;
+            }
+
+            Instruction::Cast(target_type) => {
+                let value = self.pop()?;
+                let cast_value = self.cast_value(value, target_type)?;
+                self.stack.push(cast_value);
+            }
+
+            Instruction::MakeClosure {
+                func_name,
+                param_count,
+            } => {
+                // Create a closure value that references the compiled function
+                let closure = Value::Closure {
+                    func_name: func_name.clone(),
+                    param_count: *param_count,
+                };
+                self.stack.push(closure);
             }
         }
 
@@ -894,6 +1311,80 @@ impl VM {
         self.ip = func.start_address;
 
         Ok(())
+    }
+
+    /// Call a closure with given arguments and return the result
+    /// This is used for higher-order functions like map, filter, fold
+    fn call_closure_with_value(
+        &mut self,
+        closure: &Value,
+        args: Vec<Value>,
+        bytecode: &Bytecode,
+    ) -> ZyraResult<Value> {
+        if let Value::Closure {
+            func_name,
+            param_count,
+        } = closure
+        {
+            // Verify argument count
+            if args.len() != *param_count {
+                return Err(ZyraError::runtime_error(&format!(
+                    "Closure expected {} arguments, got {}",
+                    param_count,
+                    args.len()
+                )));
+            }
+
+            // Look up the closure function
+            if let Some(func) = bytecode.functions.get(func_name) {
+                // Save state
+                let saved_ip = self.ip;
+                let saved_stack_len = self.stack.len();
+
+                // Call the closure
+                self.call_function(func, args)?;
+
+                // Execute until return
+                while self.ip < bytecode.instructions.len() && !self.halted {
+                    let instr = &bytecode.instructions[self.ip];
+                    self.ip += 1;
+
+                    // Check for Return instruction
+                    if matches!(instr, Instruction::Return) {
+                        if let Some(frame) = self.call_stack.pop() {
+                            // Get return value from stack
+                            let return_value = if self.stack.len() > saved_stack_len {
+                                self.pop()?
+                            } else {
+                                Value::None
+                            };
+
+                            // Restore state
+                            self.ip = saved_ip;
+
+                            // Clean up any leftover stack values
+                            while self.scopes.len() > frame.base_pointer {
+                                self.scopes.pop();
+                            }
+
+                            return Ok(return_value);
+                        }
+                    }
+
+                    self.execute_instruction(instr, bytecode)?;
+                }
+
+                // If we get here without returning, return None
+                Ok(Value::None)
+            } else {
+                Err(ZyraError::runtime_error(&format!(
+                    "Closure function '{}' not found",
+                    func_name
+                )))
+            }
+        } else {
+            Err(ZyraError::runtime_error("Expected a closure value"))
+        }
     }
 
     fn pop(&mut self) -> ZyraResult<Value> {
@@ -967,6 +1458,81 @@ impl VM {
             }
         }
         None
+    }
+
+    /// Cast a value to a target type at runtime
+    fn cast_value(&self, value: Value, target_type: &str) -> ZyraResult<Value> {
+        match target_type {
+            // Integer casts
+            "i8" => {
+                let n = self.value_to_i64(&value)?;
+                Ok(Value::I8(n as i8))
+            }
+            "i32" => {
+                let n = self.value_to_i64(&value)?;
+                Ok(Value::I32(n as i32))
+            }
+            "i64" | "Int" => {
+                let n = self.value_to_i64(&value)?;
+                Ok(Value::I64(n))
+            }
+            // Unsigned integer casts
+            "u8" => {
+                let n = self.value_to_i64(&value)?;
+                Ok(Value::U8(n as u8))
+            }
+            "u32" => {
+                let n = self.value_to_i64(&value)?;
+                Ok(Value::U32(n as u32))
+            }
+            "u64" => {
+                let n = self.value_to_i64(&value)?;
+                Ok(Value::U64(n as u64))
+            }
+            // Float casts
+            "f32" => {
+                let n = self.value_to_f64(&value)?;
+                Ok(Value::F32(n as f32))
+            }
+            "f64" | "Float" => {
+                let n = self.value_to_f64(&value)?;
+                Ok(Value::Float(n))
+            }
+            // Same type - return as-is
+            _ => Ok(value),
+        }
+    }
+
+    /// Helper to extract i64 from any numeric value
+    fn value_to_i64(&self, value: &Value) -> ZyraResult<i64> {
+        match value {
+            Value::I8(n) => Ok(*n as i64),
+            Value::I32(n) => Ok(*n as i64),
+            Value::I64(n) | Value::Int(n) => Ok(*n),
+            Value::U8(n) => Ok(*n as i64),
+            Value::U32(n) => Ok(*n as i64),
+            Value::U64(n) => Ok(*n as i64),
+            Value::F32(n) => Ok(*n as i64),
+            Value::F64(n) | Value::Float(n) => Ok(*n as i64),
+            Value::Bool(b) => Ok(if *b { 1 } else { 0 }),
+            Value::Char(c) => Ok(*c as i64),
+            _ => Err(ZyraError::runtime_error("Cannot cast value to integer")),
+        }
+    }
+
+    /// Helper to extract f64 from any numeric value
+    fn value_to_f64(&self, value: &Value) -> ZyraResult<f64> {
+        match value {
+            Value::I8(n) => Ok(*n as f64),
+            Value::I32(n) => Ok(*n as f64),
+            Value::I64(n) | Value::Int(n) => Ok(*n as f64),
+            Value::U8(n) => Ok(*n as f64),
+            Value::U32(n) => Ok(*n as f64),
+            Value::U64(n) => Ok(*n as f64),
+            Value::F32(n) => Ok(*n as f64),
+            Value::F64(n) | Value::Float(n) => Ok(*n),
+            _ => Err(ZyraError::runtime_error("Cannot cast value to float")),
+        }
     }
 }
 

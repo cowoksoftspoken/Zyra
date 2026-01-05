@@ -30,9 +30,26 @@ impl StdLib {
         Self {}
     }
 
+    /// Extract i64 from any integer Value type (I8, I32, I64, Int, U8, U32, U64)
+    fn to_i64(v: &Value) -> Option<i64> {
+        match v {
+            Value::Int(n) | Value::I64(n) => Some(*n),
+            Value::I32(n) => Some(*n as i64),
+            Value::I8(n) => Some(*n as i64),
+            Value::U8(n) => Some(*n as i64),
+            Value::U32(n) => Some(*n as i64),
+            Value::U64(n) => Some(*n as i64),
+            _ => None,
+        }
+    }
+
     /// Call a standard library function
     pub fn call(&self, name: &str, args: &[Value]) -> ZyraResult<Option<Value>> {
-        match name {
+        // Handle qualified names by using the leaf name (e.g. std::math::abs -> abs)
+        // This relies on the semantic analyzer to ensure correct module usage
+        let func_name = name.split("::").last().unwrap_or(name);
+
+        match func_name {
             // IO functions
             "print" => {
                 if let Some(value) = args.first() {
@@ -150,28 +167,20 @@ impl StdLib {
             // Time functions
             "now" => Ok(Some(time::now())),
             "sleep" => {
-                if let Some(Value::Int(ms)) = args.first() {
-                    time::sleep(*ms);
-                }
+                let ms = match args.first() {
+                    Some(Value::Int(n)) => *n,
+                    Some(Value::I64(n)) => *n,
+                    Some(Value::I32(n)) => *n as i64,
+                    _ => 0,
+                };
+                time::sleep(ms);
                 Ok(Some(Value::None))
             }
 
             // Game functions - Window constructor
             "Window" => {
-                let width = args
-                    .get(0)
-                    .and_then(|v| match v {
-                        Value::Int(n) => Some(*n),
-                        _ => None,
-                    })
-                    .unwrap_or(800);
-                let height = args
-                    .get(1)
-                    .and_then(|v| match v {
-                        Value::Int(n) => Some(*n),
-                        _ => None,
-                    })
-                    .unwrap_or(600);
+                let width = args.get(0).and_then(Self::to_i64).unwrap_or(800);
+                let height = args.get(1).and_then(Self::to_i64).unwrap_or(600);
                 let title = args
                     .get(2)
                     .and_then(|v| match v {
@@ -204,34 +213,10 @@ impl StdLib {
 
             // Drawing
             "draw.rect" | "draw_rect" => {
-                let x = args
-                    .get(0)
-                    .and_then(|v| match v {
-                        Value::Int(n) => Some(*n),
-                        _ => None,
-                    })
-                    .unwrap_or(0);
-                let y = args
-                    .get(1)
-                    .and_then(|v| match v {
-                        Value::Int(n) => Some(*n),
-                        _ => None,
-                    })
-                    .unwrap_or(0);
-                let w = args
-                    .get(2)
-                    .and_then(|v| match v {
-                        Value::Int(n) => Some(*n),
-                        _ => None,
-                    })
-                    .unwrap_or(10);
-                let h = args
-                    .get(3)
-                    .and_then(|v| match v {
-                        Value::Int(n) => Some(*n),
-                        _ => None,
-                    })
-                    .unwrap_or(10);
+                let x = args.get(0).and_then(Self::to_i64).unwrap_or(0);
+                let y = args.get(1).and_then(Self::to_i64).unwrap_or(0);
+                let w = args.get(2).and_then(Self::to_i64).unwrap_or(10);
+                let h = args.get(3).and_then(Self::to_i64).unwrap_or(10);
                 game::draw_rect(x, y, w, h);
                 Ok(Some(Value::None))
             }
@@ -272,6 +257,104 @@ impl StdLib {
                     })
                     .unwrap_or(0xFFFFFF);
                 game::draw_rect_color(x, y, w, h, color);
+                Ok(Some(Value::None))
+            }
+
+            // Draw a number at position with scale
+            "draw_number" | "draw.number" => {
+                let x = args
+                    .first()
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let y = args
+                    .get(1)
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let num = args
+                    .get(2)
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let scale = args
+                    .get(3)
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(2);
+                game::draw_number(x, y, num, 0xFFFFFF, scale);
+                Ok(Some(Value::None))
+            }
+
+            // Draw WIN text
+            "draw_win" | "draw.win" => {
+                let x = args
+                    .first()
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let y = args
+                    .get(1)
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let scale = args
+                    .get(2)
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(4);
+                game::draw_text_win(x, y, 0x00FF00, scale); // Green
+                Ok(Some(Value::None))
+            }
+
+            // Draw LOSE text
+            "draw_lose" | "draw.lose" => {
+                let x = args
+                    .first()
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let y = args
+                    .get(1)
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(0);
+                let scale = args
+                    .get(2)
+                    .and_then(|v| match v {
+                        Value::Int(n) => Some(*n),
+                        Value::I32(n) => Some(*n as i64),
+                        _ => None,
+                    })
+                    .unwrap_or(4);
+                game::draw_text_lose(x, y, 0xFF0000, scale); // Red
                 Ok(Some(Value::None))
             }
 
