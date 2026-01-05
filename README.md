@@ -17,13 +17,6 @@
       <img src="https://img.shields.io/github/actions/workflow/status/cowoksoftspoken/Zyra/rust.yml?branch=main&style=flat-square" alt="Build Status">
     </a>
   </p>
-
-  <h4>
-    <a href="#key-features">Key Features</a> •
-    <a href="#quick-start">Quick Start</a> •
-    <a href="#installation">Installation</a> •
-    <a href="#documentation">Documentation</a>
-  </h4>
 </div>
 
 ---
