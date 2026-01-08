@@ -2,28 +2,43 @@
 
 This directory contains installation scripts for the Zyra programming language.
 
-## Windows Installation
+## 🖥️ Windows GUI Installer (Recommended)
+
+The easiest way to install Zyra on Windows.
+
+### Build the Installer
+
+1. Install [Inno Setup 6.x](https://jrsoftware.org/isdl.php)
+2. Run `cargo build --release`
+3. Open `ZyraSetup.iss` in Inno Setup Compiler
+4. Press `Ctrl+F9` to build
+5. Find `ZyraSetup-1.0.1.exe` in the `dist/` folder
+
+### Features
+
+- ✅ License agreement page
+- ✅ Add to PATH option
+- ✅ Desktop shortcut
+- ✅ Start menu shortcuts
+- ✅ Clean uninstaller
+
+---
+
+## Windows Command Line Installation
 
 ### Quick Install (Double-click)
 
 1. Double-click `install.bat`
 2. Follow the on-screen prompts
 
-### Command Line Install
+### PowerShell Install
 
 ```powershell
-# User-level installation
-.\install.ps1
-
-# System-wide installation (run as Administrator)
-.\install.ps1
+.\install.ps1           # User-level
+.\install.ps1 -Uninstall # Uninstall
 ```
 
-### Uninstall
-
-```powershell
-.\install.ps1 -Uninstall
-```
+---
 
 ## Linux Installation
 
@@ -34,50 +49,26 @@ chmod +x install.sh
 ./install.sh
 ```
 
-### System-wide Install (requires sudo)
+### Options
 
 ```bash
-sudo ./install.sh
+sudo ./install.sh          # System-wide
+./install.sh --prefix ~/   # Custom prefix
+./install.sh --uninstall   # Uninstall
 ```
 
-### Custom Prefix
-
-```bash
-./install.sh --prefix ~/.local
-```
-
-### Uninstall
-
-```bash
-./install.sh --uninstall
-```
-
-## What Gets Installed
-
-- `zyra` - The Zyra compiler and runtime
-- PATH environment variable update
+---
 
 ## Installation Locations
 
-### Windows
-
-| Mode        | Location                    |
-| ----------- | --------------------------- |
-| User-level  | `%LOCALAPPDATA%\Zyra\bin`   |
-| System-wide | `C:\Program Files\Zyra\bin` |
-
-### Linux
-
-| Mode        | Location         |
-| ----------- | ---------------- |
-| User-level  | `~/.local/bin`   |
-| System-wide | `/usr/local/bin` |
+| Platform      | Mode  | Location                 |
+| ------------- | ----- | ------------------------ |
+| Windows (GUI) | Admin | `C:\Program Files\Zyra\` |
+| Windows (CLI) | User  | `%LOCALAPPDATA%\Zyra\`   |
+| Linux         | User  | `~/.local/bin`           |
+| Linux         | Root  | `/usr/local/bin`         |
 
 ## Requirements
-
-- [Rust](https://rustup.rs/) (for building from source)
-
-## After Installation
 
 Restart your terminal, then verify:
 
