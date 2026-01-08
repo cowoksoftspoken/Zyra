@@ -18,14 +18,6 @@
     </a>
   </p>
 
-  <h3>⚡ Powerful like Rust, readable like Python, productive like modern languages.</h3>
-
-  <h4>
-    <a href="#why-zyra">Why Zyra</a> •
-    <a href="#quick-start">Quick Start</a> •
-    <a href="#use-cases">Use Cases</a> •
-    <a href="#installation">Installation</a>
-  </h4>
 </div>
 
 ---
