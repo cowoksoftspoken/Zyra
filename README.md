@@ -17,7 +17,8 @@
       <img src="https://img.shields.io/github/actions/workflow/status/cowoksoftspoken/Zyra/rust.yml?branch=main&style=flat-square" alt="Build Status">
     </a>
   </p>
-
+  
+  <h3>⚡ Powerful like Rust, readable like Python, productive like modern languages.</h3>
 </div>
 
 ---
