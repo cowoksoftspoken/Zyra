@@ -358,6 +358,41 @@ impl StdLib {
                 Ok(Some(Value::None))
             }
 
+            // Sprite functions
+            "load_sprite" | "sprite.load" => {
+                if let Some(Value::String(path)) = args.first() {
+                    let id = game::load_sprite(path);
+                    Ok(Some(Value::Int(id)))
+                } else {
+                    Ok(Some(Value::Int(0)))
+                }
+            }
+            "draw_sprite" | "sprite.draw" => {
+                let id = args.get(0).and_then(Self::to_i64).unwrap_or(0);
+                let x = args.get(1).and_then(Self::to_i64).unwrap_or(0);
+                let y = args.get(2).and_then(Self::to_i64).unwrap_or(0);
+                game::draw_sprite(id, x, y);
+                Ok(Some(Value::None))
+            }
+            "draw_sprite_scaled" | "sprite.draw_scaled" => {
+                let id = args.get(0).and_then(Self::to_i64).unwrap_or(0);
+                let x = args.get(1).and_then(Self::to_i64).unwrap_or(0);
+                let y = args.get(2).and_then(Self::to_i64).unwrap_or(0);
+                let scale = args.get(3).and_then(Self::to_i64).unwrap_or(1);
+                game::draw_sprite_scaled(id, x, y, scale);
+                Ok(Some(Value::None))
+            }
+
+            // Window icon
+            "set_icon" | "set_window_icon" => {
+                if let Some(Value::String(path)) = args.first() {
+                    let success = game::set_window_icon(path);
+                    Ok(Some(Value::Bool(success)))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "is_icon_supported" => Ok(Some(Value::Bool(game::is_icon_supported()))),
             // String/List methods
             "len" | "length" => {
                 if let Some(value) = args.first() {

@@ -5,6 +5,15 @@
 use crate::compiler::bytecode::{Value, WindowState};
 use minifb::{Key, Window, WindowOptions};
 use std::collections::HashMap;
+use std::path::Path;
+
+/// Sprite data: RGBA pixels converted to u32 for minifb
+#[derive(Clone)]
+pub struct Sprite {
+    pub pixels: Vec<u32>, // ARGB format for minifb
+    pub width: usize,
+    pub height: usize,
+}
 
 /// Global game state
 pub struct GameState {
@@ -14,6 +23,8 @@ pub struct GameState {
     pub height: usize,
     pub keys_pressed: HashMap<String, bool>,
     pub running: bool,
+    pub sprites: HashMap<usize, Sprite>, // Sprite storage by ID
+    pub next_sprite_id: usize,
 }
 
 impl GameState {
@@ -25,6 +36,8 @@ impl GameState {
             height: 0,
             keys_pressed: HashMap::new(),
             running: false,
+            sprites: HashMap::new(),
+            next_sprite_id: 1,
         }
     }
 
@@ -155,6 +168,10 @@ pub fn create_window(width: i64, height: i64, title: &str) -> Value {
     GAME_STATE.with(|state| {
         let mut state = state.borrow_mut();
         if state.create_window(w, h, &title_owned) {
+            // Try to set default icon (non-blocking, fails silently)
+            drop(state); // Release borrow before calling set_window_icon
+            try_set_default_icon();
+
             Value::Window(WindowState {
                 width: w,
                 height: h,
@@ -166,6 +183,33 @@ pub fn create_window(width: i64, height: i64, title: &str) -> Value {
             Value::None
         }
     })
+}
+
+/// Try to set the default Zyra window icon
+/// Windows: looks for zyra.ico
+/// Linux/Other: looks for zyra.png
+fn try_set_default_icon() {
+    #[cfg(target_os = "windows")]
+    let icon_paths = [
+        "extensions/ZyraFileIcons/icons/zyra.ico",
+        "./extensions/ZyraFileIcons/icons/zyra.ico",
+        "../extensions/ZyraFileIcons/icons/zyra.ico",
+    ];
+
+    #[cfg(not(target_os = "windows"))]
+    let icon_paths = [
+        "extensions/ZyraFileIcons/icons/zyra.png",
+        "./extensions/ZyraFileIcons/icons/zyra.png",
+        "../extensions/ZyraFileIcons/icons/zyra.png",
+    ];
+
+    for path in &icon_paths {
+        if std::path::Path::new(path).exists() {
+            // Silently attempt to set the icon
+            let _ = set_window_icon(path);
+            break;
+        }
+    }
 }
 
 /// Check if window is open
@@ -407,4 +451,194 @@ fn draw_char_pattern(x: i64, y: i64, pattern: &[u8; 7], color: u32, scale: i64) 
             }
         }
     });
+}
+
+/// Load a sprite from an image file (PNG, JPEG, etc.)
+/// Returns sprite ID on success, 0 on failure
+pub fn load_sprite(path: &str) -> i64 {
+    use image::GenericImageView;
+
+    let img_result = image::open(Path::new(path));
+
+    match img_result {
+        Ok(img) => {
+            let (width, height) = img.dimensions();
+            let rgba = img.to_rgba8();
+
+            // Convert RGBA to ARGB (minifb format)
+            let mut pixels: Vec<u32> = Vec::with_capacity((width * height) as usize);
+            for pixel in rgba.pixels() {
+                let r = pixel[0] as u32;
+                let g = pixel[1] as u32;
+                let b = pixel[2] as u32;
+                let a = pixel[3] as u32;
+                // ARGB format for minifb
+                let argb = (a << 24) | (r << 16) | (g << 8) | b;
+                pixels.push(argb);
+            }
+
+            let sprite = Sprite {
+                pixels,
+                width: width as usize,
+                height: height as usize,
+            };
+
+            GAME_STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                let id = state.next_sprite_id;
+                state.sprites.insert(id, sprite);
+                state.next_sprite_id += 1;
+                id as i64
+            })
+        }
+        Err(_) => 0, // Return 0 on failure
+    }
+}
+
+/// Draw a sprite at position (x, y)
+pub fn draw_sprite(sprite_id: i64, x: i64, y: i64) {
+    draw_sprite_scaled(sprite_id, x, y, 1);
+}
+
+/// Draw a sprite with scaling
+pub fn draw_sprite_scaled(sprite_id: i64, x: i64, y: i64, scale: i64) {
+    // First, get the sprite data (clone it to avoid borrow conflicts)
+    let sprite_data = GAME_STATE.with(|state| {
+        let state = state.borrow();
+        state.sprites.get(&(sprite_id as usize)).cloned()
+    });
+
+    // Now draw using the cloned sprite data
+    if let Some(sprite) = sprite_data {
+        let scale = scale.max(1) as usize;
+
+        GAME_STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            let width = state.width;
+            let height = state.height;
+
+            for sy in 0..sprite.height {
+                for sx in 0..sprite.width {
+                    let pixel = sprite.pixels[sy * sprite.width + sx];
+
+                    // Skip fully transparent pixels (alpha = 0)
+                    if (pixel >> 24) == 0 {
+                        continue;
+                    }
+
+                    // Draw scaled pixel
+                    let dest_x = x + (sx * scale) as i64;
+                    let dest_y = y + (sy * scale) as i64;
+
+                    // Convert ARGB to RGB for drawing
+                    let rgb = pixel & 0x00FFFFFF;
+
+                    for dy in 0..scale {
+                        for dx in 0..scale {
+                            let px = dest_x + dx as i64;
+                            let py = dest_y + dy as i64;
+
+                            if px >= 0 && py >= 0 && (px as usize) < width && (py as usize) < height
+                            {
+                                state.buffer[(py as usize) * width + (px as usize)] = rgb;
+                            }
+                        }
+                    }
+                }
+            }
+        });
+    }
+}
+
+// ============================================
+// WINDOW ICON FUNCTION
+// ============================================
+
+/// Set the window icon from a file path
+/// On Windows: expects .ico file
+/// On Linux: uses image data directly
+/// On macOS/Wayland: Not supported (returns false)
+pub fn set_window_icon(path: &str) -> bool {
+    #[cfg(target_os = "windows")]
+    {
+        use minifb::Icon;
+        use std::str::FromStr;
+
+        GAME_STATE.with(|state| {
+            let mut state = state.borrow_mut();
+            if let Some(ref mut window) = state.window {
+                // Windows requires .ico file
+                match Icon::from_str(path) {
+                    Ok(icon) => {
+                        window.set_icon(icon);
+                        true
+                    }
+                    Err(_) => false,
+                }
+            } else {
+                false
+            }
+        })
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        use image::GenericImageView;
+        use minifb::Icon;
+
+        // Load image and convert to ARGB buffer
+        if let Ok(img) = image::open(Path::new(path)) {
+            let (width, height) = img.dimensions();
+            let rgba = img.to_rgba8();
+
+            let mut argb_data: Vec<u64> = Vec::with_capacity((width * height) as usize + 2);
+            argb_data.push(width as u64);
+            argb_data.push(height as u64);
+
+            for pixel in rgba.pixels() {
+                let r = pixel[0] as u64;
+                let g = pixel[1] as u64;
+                let b = pixel[2] as u64;
+                let a = pixel[3] as u64;
+                argb_data.push((a << 24) | (r << 16) | (g << 8) | b);
+            }
+
+            GAME_STATE.with(|state| {
+                let mut state = state.borrow_mut();
+                if let Some(ref mut window) = state.window {
+                    match Icon::from_argb(&argb_data) {
+                        Ok(icon) => {
+                            window.set_icon(icon);
+                            true
+                        }
+                        Err(_) => false,
+                    }
+                } else {
+                    false
+                }
+            })
+        } else {
+            false
+        }
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        // macOS, Wayland, etc. - not supported
+        let _ = path;
+        false
+    }
+}
+
+/// Check if window icon is supported on this platform
+pub fn is_icon_supported() -> bool {
+    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    {
+        true
+    }
+
+    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    {
+        false
+    }
 }

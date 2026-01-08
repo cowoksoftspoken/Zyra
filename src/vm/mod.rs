@@ -82,7 +82,11 @@ impl VM {
 
             // Mark main as called and execute it
             self.main_called = true;
-            self.call_function(main_func, Vec::new())?;
+
+            // Set up main execution WITHOUT pushing a CallFrame
+            // This way when main() returns, call_stack is empty and halted gets set to true
+            self.scopes.push(Scope::new()); // Enter main's scope
+            self.ip = main_func.start_address;
 
             // Execute instructions starting from main's body
             while self.ip < bytecode.instructions.len() && !self.halted {
@@ -130,9 +134,11 @@ impl VM {
             }
 
             Instruction::Pop => {
-                let val = self.pop()?;
-                if let Value::Ref(heap_id) = val {
-                    let _ = self.heap.dec_ref(heap_id);
+                // Gracefully handle empty stack (e.g., after void function calls)
+                if let Some(val) = self.stack.pop() {
+                    if let Value::Ref(heap_id) = val {
+                        let _ = self.heap.dec_ref(heap_id);
+                    }
                 }
             }
 

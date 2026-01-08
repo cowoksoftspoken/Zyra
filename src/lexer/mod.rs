@@ -389,6 +389,24 @@ impl<'a> Lexer<'a> {
         let mut num_str = String::from(first);
         let mut is_float = false;
 
+        // Check for hex literal (0x or 0X prefix)
+        if first == '0' && (self.peek() == 'x' || self.peek() == 'X') {
+            self.advance(); // Consume 'x' or 'X'
+            let mut hex_str = String::new();
+
+            while self.peek().is_ascii_hexdigit() {
+                hex_str.push(self.advance());
+            }
+
+            if hex_str.is_empty() {
+                return Err(self.error("Expected hex digits after '0x'"));
+            }
+
+            let value = i64::from_str_radix(&hex_str, 16)
+                .map_err(|_| self.error(&format!("Invalid hex literal '0x{}'", hex_str)))?;
+            return Ok(TokenKind::Int(value));
+        }
+
         while self.peek().is_ascii_digit() {
             num_str.push(self.advance());
         }

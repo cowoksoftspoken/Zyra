@@ -343,8 +343,8 @@ impl Bytecode {
         output.extend_from_slice(b"ZYRA");
 
         // Version (2 bytes)
-        output.push(0);
         output.push(1);
+        output.push(0);
 
         // Instruction count (4 bytes, little-endian)
         let count = self.instructions.len() as u32;

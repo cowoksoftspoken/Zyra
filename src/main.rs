@@ -163,7 +163,7 @@ fn main() {
 }
 
 fn print_usage() {
-    println!("{}", "Zyra Programming Language v1.0.0".cyan().bold());
+    println!("{}", "Zyra Programming Language v1.0.1".cyan().bold());
     println!();
     println!("{}", "Usage:".yellow().bold());
     println!(

@@ -442,6 +442,87 @@ impl SemanticAnalyzer {
                     ],
                     ZyraType::Void,
                 ),
+                (
+                    "draw_rect_color",
+                    vec![
+                        ("x", ZyraType::I32),
+                        ("y", ZyraType::I32),
+                        ("w", ZyraType::I32),
+                        ("h", ZyraType::I32),
+                        ("color", ZyraType::I32),
+                    ],
+                    ZyraType::Void,
+                ),
+                (
+                    "draw_digit",
+                    vec![
+                        ("x", ZyraType::I32),
+                        ("y", ZyraType::I32),
+                        ("digit", ZyraType::I32),
+                        ("color", ZyraType::I32),
+                    ],
+                    ZyraType::I32,
+                ),
+                (
+                    "draw_number",
+                    vec![
+                        ("x", ZyraType::I32),
+                        ("y", ZyraType::I32),
+                        ("num", ZyraType::I32),
+                        ("scale", ZyraType::I32),
+                    ],
+                    ZyraType::Void,
+                ),
+                (
+                    "draw_text_win",
+                    vec![
+                        ("x", ZyraType::I32),
+                        ("y", ZyraType::I32),
+                        ("scale", ZyraType::I32),
+                    ],
+                    ZyraType::Void,
+                ),
+                (
+                    "draw_text_lose",
+                    vec![
+                        ("x", ZyraType::I32),
+                        ("y", ZyraType::I32),
+                        ("scale", ZyraType::I32),
+                    ],
+                    ZyraType::Void,
+                ),
+                // Sprites
+                (
+                    "load_sprite",
+                    vec![("path", ZyraType::String)],
+                    ZyraType::I64,
+                ),
+                (
+                    "draw_sprite",
+                    vec![
+                        ("id", ZyraType::I64),
+                        ("x", ZyraType::I32),
+                        ("y", ZyraType::I32),
+                    ],
+                    ZyraType::Void,
+                ),
+                (
+                    "draw_sprite_scaled",
+                    vec![
+                        ("id", ZyraType::I64),
+                        ("x", ZyraType::I32),
+                        ("y", ZyraType::I32),
+                        ("scale", ZyraType::I32),
+                    ],
+                    ZyraType::Void,
+                ),
+                // Icons
+                (
+                    "set_window_icon",
+                    vec![("path", ZyraType::String)],
+                    ZyraType::Bool,
+                ),
+                ("is_icon_supported", vec![], ZyraType::Bool),
             ],
             _ => vec![],
         };
@@ -1622,6 +1703,79 @@ impl SemanticAnalyzer {
                 let mut arg_types = Vec::new();
                 for arg in arguments {
                     arg_types.push(self.analyze_expression(arg)?);
+                }
+
+                // *** COMPILE-TIME ICON FORMAT CHECK ***
+                // On Windows, set_window_icon requires .ico files
+                #[cfg(target_os = "windows")]
+                {
+                    let short_name = if let Some(idx) = func_name.rfind("::") {
+                        &func_name[idx + 2..]
+                    } else {
+                        &func_name
+                    };
+
+                    if short_name == "set_window_icon" || short_name == "set_icon" {
+                        // Check if first argument is a string literal
+                        if let Some(first_arg) = arguments.first() {
+                            if let Expression::String { value: path, .. } = first_arg {
+                                // Check 1: Must be .ico on Windows
+                                if !path.to_lowercase().ends_with(".ico") {
+                                    return Err(ZyraError::new(
+                                        "TypeError",
+                                        &format!(
+                                            "set_window_icon requires .ico file on Windows. Got: '{}'. \
+                                             Please convert your icon to .ico format.",
+                                            path
+                                        ),
+                                        Some(SourceLocation::new("", span.line, span.column)),
+                                    ));
+                                }
+
+                                // Check 2: File must exist
+                                if !std::path::Path::new(path).exists() {
+                                    return Err(ZyraError::new(
+                                        "FileError",
+                                        &format!(
+                                            "Icon file not found: '{}'. \
+                                             Please ensure the file exists at the specified path.",
+                                            path
+                                        ),
+                                        Some(SourceLocation::new("", span.line, span.column)),
+                                    ));
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // *** COMPILE-TIME ICON FILE CHECK (non-Windows) ***
+                // On non-Windows, just check if file exists
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let short_name = if let Some(idx) = func_name.rfind("::") {
+                        &func_name[idx + 2..]
+                    } else {
+                        &func_name
+                    };
+
+                    if short_name == "set_window_icon" || short_name == "set_icon" {
+                        if let Some(first_arg) = arguments.first() {
+                            if let Expression::String { value: path, .. } = first_arg {
+                                if !std::path::Path::new(path).exists() {
+                                    return Err(ZyraError::new(
+                                        "FileError",
+                                        &format!(
+                                            "Icon file not found: '{}'. \
+                                             Please ensure the file exists at the specified path.",
+                                            path
+                                        ),
+                                        Some(SourceLocation::new("", span.line, span.column)),
+                                    ));
+                                }
+                            }
+                        }
+                    }
                 }
 
                 // Look up function signature
