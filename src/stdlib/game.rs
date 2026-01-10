@@ -186,31 +186,89 @@ pub fn create_window(width: i64, height: i64, title: &str) -> Value {
 }
 
 /// Try to set the default Zyra window icon
-/// Windows: looks for zyra.ico
-/// Linux/Other: looks for zyra.png
+/// Windows: looks for zyra.ico in installed and development paths
+/// Linux/Other: looks for zyra.png or zyra.ico
 fn try_set_default_icon() {
     #[cfg(target_os = "windows")]
-    let icon_paths = [
-        "extensions/ZyraFileIcons/icons/zyra.ico",
-        "./extensions/ZyraFileIcons/icons/zyra.ico",
-        "../extensions/ZyraFileIcons/icons/zyra.ico",
-    ];
+    {
+        // Build dynamic paths for Windows installed locations
+        let program_files =
+            std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
+        let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "".to_string());
+
+        let installed_paths = vec![
+            format!("{}\\Zyra\\icons\\zyra.ico", program_files),
+            format!("{}\\Zyra\\icons\\zyra.ico", local_app_data),
+        ];
+
+        // Static development paths
+        let dev_paths = [
+            "extensions/ZyraFileIcons/icons/zyra.ico",
+            "./extensions/ZyraFileIcons/icons/zyra.ico",
+            "../extensions/ZyraFileIcons/icons/zyra.ico",
+            "icons/zyra.ico",
+            "./icons/zyra.ico",
+        ];
+
+        // Try installed paths first
+        for path in &installed_paths {
+            if std::path::Path::new(path).exists() {
+                let _ = set_window_icon(path);
+                return;
+            }
+        }
+
+        // Then try development paths
+        for path in &dev_paths {
+            if std::path::Path::new(path).exists() {
+                let _ = set_window_icon(path);
+                return;
+            }
+        }
+    }
 
     #[cfg(not(target_os = "windows"))]
-    let icon_paths = [
-        "extensions/ZyraFileIcons/icons/zyra.png",
-        "./extensions/ZyraFileIcons/icons/zyra.png",
-        "../extensions/ZyraFileIcons/icons/zyra.png",
-        "extensions/ZyraFileIcons/icons/zyra.ico",
-        "./extensions/ZyraFileIcons/icons/zyra.ico",
-        "../extensions/ZyraFileIcons/icons/zyra.ico",
-    ];
+    {
+        // Linux installed paths (system-wide and user-level)
+        let home = std::env::var("HOME").unwrap_or_else(|_| "".to_string());
 
-    for path in &icon_paths {
-        if std::path::Path::new(path).exists() {
-            // Silently attempt to set the icon
-            let _ = set_window_icon(path);
-            break;
+        let installed_paths = vec![
+            "/usr/local/share/zyra/icons/zyra.png".to_string(),
+            "/usr/local/share/zyra/icons/zyra.ico".to_string(),
+            "/usr/share/zyra/icons/zyra.png".to_string(),
+            "/usr/share/zyra/icons/zyra.ico".to_string(),
+            format!("{}/.local/share/zyra/icons/zyra.png", home),
+            format!("{}/.local/share/zyra/icons/zyra.ico", home),
+        ];
+
+        // Static development paths
+        let dev_paths = [
+            "extensions/ZyraFileIcons/icons/zyra.png",
+            "./extensions/ZyraFileIcons/icons/zyra.png",
+            "../extensions/ZyraFileIcons/icons/zyra.png",
+            "extensions/ZyraFileIcons/icons/zyra.ico",
+            "./extensions/ZyraFileIcons/icons/zyra.ico",
+            "../extensions/ZyraFileIcons/icons/zyra.ico",
+            "icons/zyra.png",
+            "./icons/zyra.png",
+            "icons/zyra.ico",
+            "./icons/zyra.ico",
+        ];
+
+        // Try installed paths first
+        for path in &installed_paths {
+            if std::path::Path::new(path).exists() {
+                let _ = set_window_icon(path);
+                return;
+            }
+        }
+
+        // Then try development paths
+        for path in &dev_paths {
+            if std::path::Path::new(path).exists() {
+                let _ = set_window_icon(path);
+                return;
+            }
         }
     }
 }

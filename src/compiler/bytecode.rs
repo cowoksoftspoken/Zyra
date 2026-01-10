@@ -620,8 +620,8 @@ impl Bytecode {
             return Err("Invalid bytecode: bad magic number".to_string());
         }
 
-        // Check version
-        let version = (data[4] as u16) << 8 | data[5] as u16;
+        // Check version (little-endian to match serialization)
+        let version = data[4] as u16 | (data[5] as u16) << 8;
         if version != 1 {
             return Err(format!("Unsupported bytecode version: {}", version));
         }
