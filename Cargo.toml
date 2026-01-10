@@ -1,6 +1,6 @@
 [package]
 name = "zyra"
-version = "1.0.1"
+version = "1.0.2"
 edition = "2021"
 authors = ["Inggrit Setya Budi"]
 description = "A modern, memory-safe programming language with ownership semantics - built for performance, safety, and simplicity"
@@ -15,7 +15,7 @@ name = "zyra"
 path = "src/lib.rs"
 
 [dependencies]
-minifb = "0.25"
+minifb = "0.25"  
 lazy_static = "1.4"
 colored = "2.0"
 image = "0.24"  

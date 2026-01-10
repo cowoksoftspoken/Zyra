@@ -2,15 +2,17 @@
 # Windows Installation Script
 # 
 # This script installs Zyra to your system by:
-# 1. Building the release binary
-# 2. Creating installation directory
-# 3. Adding Zyra to PATH
+# 1. Using prebuilt binary from ./bin/windows/zyra.exe if available
+# 2. Falling back to building from source if binary not found
+# 3. Creating installation directory
+# 4. Adding Zyra to PATH
 #
 # Run as Administrator for system-wide installation,
 # or run normally for user-level installation.
 
 param(
     [switch]$Uninstall = $false,
+    [switch]$Build = $false,
     [string]$InstallDir = ""
 )
 
@@ -57,35 +59,56 @@ if ($Uninstall) {
 
 # Install
 Write-Header "Zyra Programming Language Installer"
-Write-Host "  Version: 1.0.0"
+Write-Host "  Version: 1.0.2"
 Write-Host "  Install Dir: $InstallDir"
 Write-Host "  Mode: $(if ($IsAdmin) { 'System-wide' } else { 'User-level' })"
 
-# Check for Rust/Cargo
-Write-Header "Checking Prerequisites"
-try {
-    $cargoVersion = cargo --version
-    Write-Step "Cargo found: $cargoVersion"
-} catch {
-    Write-Err "Cargo not found. Please install Rust from https://rustup.rs/"
-    exit 1
-}
-
-# Build release binary
-Write-Header "Building Zyra"
+# Find project root
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ProjectRoot = Split-Path -Parent $ScriptDir
 
-Push-Location $ProjectRoot
-try {
-    Write-Step "Building release binary..."
-    cargo build --release
-    if ($LASTEXITCODE -ne 0) {
-        throw "Build failed"
+# Check for prebuilt binary
+$PrebuiltBinary = "$ScriptDir\bin\windows\zyra.exe"
+$BuildBinary = "$ProjectRoot\target\release\zyra.exe"
+$UsePrebuilt = $false
+
+Write-Header "Checking Binary"
+if (-not $Build -and (Test-Path $PrebuiltBinary)) {
+    Write-Step "Found prebuilt binary at $PrebuiltBinary"
+    $UsePrebuilt = $true
+} else {
+    if ($Build) {
+        Write-Step "Force build requested, will compile from source"
+    } else {
+        Write-Warn "Prebuilt binary not found at $PrebuiltBinary"
     }
-    Write-Step "Build successful!"
-} finally {
-    Pop-Location
+}
+
+# Build from source if needed
+if (-not $UsePrebuilt) {
+    Write-Header "Building from Source"
+    
+    # Check for Rust/Cargo
+    try {
+        $cargoVersion = cargo --version
+        Write-Step "Cargo found: $cargoVersion"
+    } catch {
+        Write-Err "Cargo not found. Please install Rust from https://rustup.rs/"
+        Write-Err "Or provide a prebuilt binary at $PrebuiltBinary"
+        exit 1
+    }
+    
+    Push-Location $ProjectRoot
+    try {
+        Write-Step "Building release binary..."
+        cargo build --release
+        if ($LASTEXITCODE -ne 0) {
+            throw "Build failed"
+        }
+        Write-Step "Build successful!"
+    } finally {
+        Pop-Location
+    }
 }
 
 # Create install directory
@@ -97,7 +120,11 @@ if (-not (Test-Path $BinDir)) {
 
 # Copy binary
 Write-Step "Copying zyra.exe..."
-Copy-Item "$ProjectRoot\target\release\zyra.exe" -Destination $ExePath -Force
+if ($UsePrebuilt) {
+    Copy-Item $PrebuiltBinary -Destination $ExePath -Force
+} else {
+    Copy-Item $BuildBinary -Destination $ExePath -Force
+}
 
 # Add to PATH
 Write-Header "Configuring PATH"

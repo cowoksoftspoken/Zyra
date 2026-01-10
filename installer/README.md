@@ -12,7 +12,7 @@ The easiest way to install Zyra on Windows.
 2. Run `cargo build --release`
 3. Open `ZyraSetup.iss` in Inno Setup Compiler
 4. Press `Ctrl+F9` to build
-5. Find `ZyraSetup-1.0.1.exe` in the `dist/` folder
+5. Find `ZyraSetup-1.0.2.exe` in the `dist/` folder
 
 ### Features
 

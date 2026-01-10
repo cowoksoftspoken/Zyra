@@ -4,9 +4,10 @@
 # Linux Installation Script
 #
 # This script installs Zyra to your system by:
-# 1. Building the release binary
-# 2. Creating installation directory
-# 3. Adding Zyra to PATH
+# 1. Using prebuilt binary from ./bin/linux/zyra if available
+# 2. Falling back to building from source if binary not found
+# 3. Creating installation directory
+# 4. Adding Zyra to PATH
 #
 # Run with sudo for system-wide installation,
 # or run normally for user-level installation.
@@ -39,6 +40,7 @@ EXE_PATH="$BIN_DIR/zyra"
 
 # Parse arguments
 UNINSTALL=false
+FORCE_BUILD=false
 while [[ $# -gt 0 ]]; do
     case $1 in
         --uninstall|-u)
@@ -51,9 +53,13 @@ while [[ $# -gt 0 ]]; do
             EXE_PATH="$BIN_DIR/zyra"
             shift 2
             ;;
+        --build|-b)
+            FORCE_BUILD=true
+            shift
+            ;;
         *)
             echo "Unknown option: $1"
-            echo "Usage: $0 [--uninstall] [--prefix DIR]"
+            echo "Usage: $0 [--uninstall] [--prefix DIR] [--build]"
             exit 1
             ;;
     esac
@@ -76,40 +82,67 @@ fi
 
 # Install
 header "Zyra Programming Language Installer"
-echo "  Version: 1.0.0"
+echo "  Version: 1.0.2"
 echo "  Install Dir: $INSTALL_DIR"
 echo "  Mode: $([ "$IS_ROOT" = true ] && echo 'System-wide' || echo 'User-level')"
-
-# Check for Rust/Cargo
-header "Checking Prerequisites"
-if command -v cargo &> /dev/null; then
-    CARGO_VERSION=$(cargo --version)
-    step "Cargo found: $CARGO_VERSION"
-else
-    err "Cargo not found. Please install Rust from https://rustup.rs/"
-    exit 1
-fi
 
 # Find project root (directory containing Cargo.toml)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 
-if [ ! -f "$PROJECT_ROOT/Cargo.toml" ]; then
-    err "Could not find Cargo.toml. Please run this script from the installer directory."
-    exit 1
+# Check for prebuilt binary
+PREBUILT_BINARY="$SCRIPT_DIR/bin/linux/zyra"
+BUILD_BINARY="$PROJECT_ROOT/target/release/zyra"
+USE_PREBUILT=false
+
+header "Checking Binary"
+if [ "$FORCE_BUILD" = false ] && [ -f "$PREBUILT_BINARY" ]; then
+    step "Found prebuilt binary at $PREBUILT_BINARY"
+    
+    # Verify it's a valid Linux ELF binary
+    if file "$PREBUILT_BINARY" | grep -q "ELF"; then
+        step "Binary is valid ELF executable"
+        USE_PREBUILT=true
+    else
+        warn "Prebuilt binary is not a valid ELF executable, will build from source"
+    fi
+else
+    if [ "$FORCE_BUILD" = true ]; then
+        step "Force build requested, will compile from source"
+    else
+        warn "Prebuilt binary not found at $PREBUILT_BINARY"
+    fi
 fi
 
-# Build release binary
-header "Building Zyra"
-step "Building release binary..."
-cd "$PROJECT_ROOT"
-cargo build --release
-
-if [ $? -ne 0 ]; then
-    err "Build failed"
-    exit 1
+# Build from source if needed
+if [ "$USE_PREBUILT" = false ]; then
+    header "Building from Source"
+    
+    # Check for Rust/Cargo
+    if command -v cargo &> /dev/null; then
+        CARGO_VERSION=$(cargo --version)
+        step "Cargo found: $CARGO_VERSION"
+    else
+        err "Cargo not found. Please install Rust from https://rustup.rs/"
+        err "Or provide a prebuilt binary at $PREBUILT_BINARY"
+        exit 1
+    fi
+    
+    if [ ! -f "$PROJECT_ROOT/Cargo.toml" ]; then
+        err "Could not find Cargo.toml. Please run this script from the installer directory."
+        exit 1
+    fi
+    
+    step "Building release binary..."
+    cd "$PROJECT_ROOT"
+    cargo build --release
+    
+    if [ $? -ne 0 ]; then
+        err "Build failed"
+        exit 1
+    fi
+    step "Build successful!"
 fi
-step "Build successful!"
 
 # Create install directory
 header "Installing"
@@ -120,7 +153,11 @@ fi
 
 # Copy binary
 step "Copying zyra to $EXE_PATH..."
-cp "$PROJECT_ROOT/target/release/zyra" "$EXE_PATH"
+if [ "$USE_PREBUILT" = true ]; then
+    cp "$PREBUILT_BINARY" "$EXE_PATH"
+else
+    cp "$BUILD_BINARY" "$EXE_PATH"
+fi
 chmod +x "$EXE_PATH"
 
 # Check PATH

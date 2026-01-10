@@ -10,9 +10,6 @@ doc/
 examples/
 
 
-# Ignore tests
-tests/
-
 # Ignore benchmarks
 benches/
 

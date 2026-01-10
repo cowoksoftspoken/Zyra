@@ -1,0 +1,16 @@
+[project]
+name = "calculator"
+version = "0.1.0"
+edition = "2025"
+zyra = ">=1.0.0"
+description = "-"
+authors = "-"
+license = ["MIT"]
+
+[dependencies]
+# Add dependencies here
+# not supported yet
+
+[build]
+main_entry = "main.zr"
+output = "./"

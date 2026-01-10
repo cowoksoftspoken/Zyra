@@ -201,6 +201,9 @@ fn try_set_default_icon() {
         "extensions/ZyraFileIcons/icons/zyra.png",
         "./extensions/ZyraFileIcons/icons/zyra.png",
         "../extensions/ZyraFileIcons/icons/zyra.png",
+        "extensions/ZyraFileIcons/icons/zyra.ico",
+        "./extensions/ZyraFileIcons/icons/zyra.ico",
+        "../extensions/ZyraFileIcons/icons/zyra.ico",
     ];
 
     for path in &icon_paths {
@@ -556,8 +559,7 @@ pub fn draw_sprite_scaled(sprite_id: i64, x: i64, y: i64, scale: i64) {
 
 /// Set the window icon from a file path
 /// On Windows: expects .ico file
-/// On Linux: uses image data directly
-/// On macOS/Wayland: Not supported (returns false)
+/// On Linux/macOS/Wayland: Not supported (minifb Icon API not available on Wayland)
 pub fn set_window_icon(path: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
@@ -581,50 +583,10 @@ pub fn set_window_icon(path: &str) -> bool {
         })
     }
 
-    #[cfg(target_os = "linux")]
+    #[cfg(not(target_os = "windows"))]
     {
-        use image::GenericImageView;
-        use minifb::Icon;
-
-        // Load image and convert to ARGB buffer
-        if let Ok(img) = image::open(Path::new(path)) {
-            let (width, height) = img.dimensions();
-            let rgba = img.to_rgba8();
-
-            let mut argb_data: Vec<u64> = Vec::with_capacity((width * height) as usize + 2);
-            argb_data.push(width as u64);
-            argb_data.push(height as u64);
-
-            for pixel in rgba.pixels() {
-                let r = pixel[0] as u64;
-                let g = pixel[1] as u64;
-                let b = pixel[2] as u64;
-                let a = pixel[3] as u64;
-                argb_data.push((a << 24) | (r << 16) | (g << 8) | b);
-            }
-
-            GAME_STATE.with(|state| {
-                let mut state = state.borrow_mut();
-                if let Some(ref mut window) = state.window {
-                    match Icon::from_argb(&argb_data) {
-                        Ok(icon) => {
-                            window.set_icon(icon);
-                            true
-                        }
-                        Err(_) => false,
-                    }
-                } else {
-                    false
-                }
-            })
-        } else {
-            false
-        }
-    }
-
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
-    {
-        // macOS, Wayland, etc. - not supported
+        // Linux (X11/Wayland) and macOS: Icon API not reliably available
+        // minifb's Icon::from_argb doesn't compile on Wayland backend
         let _ = path;
         false
     }
@@ -632,12 +594,12 @@ pub fn set_window_icon(path: &str) -> bool {
 
 /// Check if window icon is supported on this platform
 pub fn is_icon_supported() -> bool {
-    #[cfg(any(target_os = "windows", target_os = "linux"))]
+    #[cfg(target_os = "windows")]
     {
         true
     }
 
-    #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+    #[cfg(not(target_os = "windows"))]
     {
         false
     }

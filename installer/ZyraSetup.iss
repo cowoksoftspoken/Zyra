@@ -8,7 +8,7 @@
 ; To build: Open this file in Inno Setup Compiler and click Build > Compile
 
 #define MyAppName "Zyra Programming Language"
-#define MyAppVersion "1.0.1"
+#define MyAppVersion "1.0.2"
 #define MyAppPublisher "Inggrit Setya Budi"
 #define MyAppURL "https://github.com/cowoksoftspoken/Zyra"
 #define MyAppExeName "zyra.exe"
@@ -51,7 +51,7 @@ Name: "addtopath"; Description: "Add Zyra to system PATH"; GroupDescription: "En
 
 [Files]
 ; Main binary (rename to zyra.exe on install)
-Source: "..\installer\bin\zyra.exe"; DestDir: "{app}\bin"; DestName: "zyra.exe"; Flags: ignoreversion
+Source: "..\installer\bin\windows\zyra.exe"; DestDir: "{app}\bin"; DestName: "zyra.exe"; Flags: ignoreversion
 
 ; Icons folder
 Source: "..\extensions\ZyraFileIcons\icons\*"; DestDir: "{app}\icons"; Flags: ignoreversion recursesubdirs createallsubdirs

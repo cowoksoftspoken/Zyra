@@ -295,7 +295,11 @@ impl ZyraType {
             (ZyraType::Reference { inner: a, .. }, ZyraType::Reference { inner: b, .. }) => {
                 a.is_compatible(b)
             }
-            // Auto-deref / borrowing compatibility checks can be added here if strictness allows
+            // Auto-deref compatibility: Reference<T> is compatible with T
+            // This allows &String to be passed where String is expected (implicit deref)
+            (ZyraType::Reference { inner, .. }, other) => inner.is_compatible(other),
+            // Also allow T where &T is expected (implicit borrow)
+            (other, ZyraType::Reference { inner, .. }) => other.is_compatible(inner),
 
             // Option/Result
             (ZyraType::Option(a), ZyraType::Option(b)) => a.is_compatible(b),

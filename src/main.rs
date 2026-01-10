@@ -140,7 +140,7 @@ fn main() {
             print_usage();
         }
         "version" | "--version" | "-v" => {
-            println!("{}", "Zyra Programming Language v1.0.0".cyan().bold());
+            println!("{}", "Zyra Programming Language v1.0.2".cyan().bold());
         }
         "init" => {
             let name = args.get(2).map(|s| s.as_str()).unwrap_or(".");
@@ -163,7 +163,7 @@ fn main() {
 }
 
 fn print_usage() {
-    println!("{}", "Zyra Programming Language v1.0.1".cyan().bold());
+    println!("{}", "Zyra Programming Language v1.0.2".cyan().bold());
     println!();
     println!("{}", "Usage:".yellow().bold());
     println!(
@@ -512,7 +512,7 @@ func main() {{
 name = "{}"
 version = "0.1.0"
 edition = "2025"
-zyra = ">=1.0.0"
+zyra = ">=1.0.2"
 description = "-"
 authors = "-"
 license = ["MIT"]

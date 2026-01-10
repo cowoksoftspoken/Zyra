@@ -7,6 +7,7 @@ pub mod env;
 pub mod fs;
 pub mod game;
 pub mod io;
+pub mod linkedlist;
 pub mod math;
 pub mod mem;
 pub mod process;
@@ -501,7 +502,21 @@ impl StdLib {
                 }
             }
             "contains" => {
-                if let (Some(Value::String(s)), Some(Value::String(substr))) =
+                // Helper to extract string from Value::String or Value::Reference
+                fn get_string_value(v: &Value) -> Option<String> {
+                    match v {
+                        Value::String(s) => Some(s.clone()),
+                        Value::Reference { name, .. } => Some(name.clone()),
+                        _ => None,
+                    }
+                }
+
+                if let (Some(s1), Some(s2)) = (
+                    args.get(0).and_then(get_string_value),
+                    args.get(1).and_then(get_string_value),
+                ) {
+                    Ok(Some(Value::Bool(string::string_contains(&s1, &s2))))
+                } else if let (Some(Value::String(s)), Some(Value::String(substr))) =
                     (args.get(0), args.get(1))
                 {
                     Ok(Some(Value::Bool(string::string_contains(s, substr))))
@@ -692,6 +707,208 @@ impl StdLib {
                 process::exit(code);
             }
             "pid" => Ok(Some(Value::Int(process::pid()))),
+
+            // New string validation functions
+            "is_numeric" => {
+                if let Some(Value::String(s)) = args.first() {
+                    Ok(Some(Value::Bool(string::string_is_numeric(s))))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "is_digit" => {
+                if let Some(Value::String(s)) = args.first() {
+                    Ok(Some(Value::Bool(string::string_is_digit(s))))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "is_alpha" => {
+                if let Some(Value::String(s)) = args.first() {
+                    Ok(Some(Value::Bool(string::string_is_alpha(s))))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "is_alphanumeric" => {
+                if let Some(Value::String(s)) = args.first() {
+                    Ok(Some(Value::Bool(string::string_is_alphanumeric(s))))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "to_i32" => {
+                if let Some(Value::String(s)) = args.first() {
+                    Ok(Some(string::string_to_i32(s)))
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+            "to_i64" => {
+                if let Some(Value::String(s)) = args.first() {
+                    Ok(Some(string::string_to_i64(s)))
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+            "to_f32" => {
+                if let Some(Value::String(s)) = args.first() {
+                    Ok(Some(string::string_to_f32(s)))
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+            "to_f64" => {
+                if let Some(Value::String(s)) = args.first() {
+                    Ok(Some(string::string_to_f64(s)))
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+
+            // LinkedList functions
+            "list_new" => Ok(Some(linkedlist::list_new())),
+            "list_push_front" => {
+                if args.len() >= 2 {
+                    if let Value::Int(id) = &args[0] {
+                        Ok(Some(linkedlist::list_push_front(*id, args[1].clone())))
+                    } else {
+                        Ok(Some(Value::Bool(false)))
+                    }
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "list_push_back" => {
+                if args.len() >= 2 {
+                    if let Value::Int(id) = &args[0] {
+                        Ok(Some(linkedlist::list_push_back(*id, args[1].clone())))
+                    } else {
+                        Ok(Some(Value::Bool(false)))
+                    }
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "list_pop_front" => {
+                if let Some(Value::Int(id)) = args.first() {
+                    Ok(Some(linkedlist::list_pop_front(*id)))
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+            "list_pop_back" => {
+                if let Some(Value::Int(id)) = args.first() {
+                    Ok(Some(linkedlist::list_pop_back(*id)))
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+            "list_get" => {
+                if args.len() >= 2 {
+                    if let (Value::Int(id), Value::Int(idx)) = (&args[0], &args[1]) {
+                        Ok(Some(linkedlist::list_get(*id, *idx)))
+                    } else {
+                        Ok(Some(Value::None))
+                    }
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+            "list_set" => {
+                if args.len() >= 3 {
+                    if let (Value::Int(id), Value::Int(idx)) = (&args[0], &args[1]) {
+                        Ok(Some(linkedlist::list_set(*id, *idx, args[2].clone())))
+                    } else {
+                        Ok(Some(Value::Bool(false)))
+                    }
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "list_len" => {
+                if let Some(Value::Int(id)) = args.first() {
+                    Ok(Some(linkedlist::list_len(*id)))
+                } else {
+                    Ok(Some(Value::Int(0)))
+                }
+            }
+            "list_is_empty" => {
+                if let Some(Value::Int(id)) = args.first() {
+                    Ok(Some(linkedlist::list_is_empty(*id)))
+                } else {
+                    Ok(Some(Value::Bool(true)))
+                }
+            }
+            "list_to_array" => {
+                if let Some(Value::Int(id)) = args.first() {
+                    Ok(Some(linkedlist::list_to_array(*id)))
+                } else {
+                    Ok(Some(Value::Array(Vec::new())))
+                }
+            }
+            "list_clear" => {
+                if let Some(Value::Int(id)) = args.first() {
+                    Ok(Some(linkedlist::list_clear(*id)))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "list_delete" => {
+                if let Some(Value::Int(id)) = args.first() {
+                    Ok(Some(linkedlist::list_delete(*id)))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+
+            // Option/Result constructors
+            "Some" => {
+                if let Some(value) = args.first() {
+                    Ok(Some(Value::some(value.clone())))
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+            "Ok" => {
+                if let Some(value) = args.first() {
+                    Ok(Some(Value::ok(value.clone())))
+                } else {
+                    Ok(Some(Value::ok(Value::None)))
+                }
+            }
+            "Err" | "Error" => {
+                if let Some(value) = args.first() {
+                    Ok(Some(Value::err(value.clone())))
+                } else {
+                    Ok(Some(Value::err(Value::None)))
+                }
+            }
+
+            // Option/Result methods (unwrap_or, is_ok, is_err - is_some/is_none/unwrap are above)
+            "unwrap_or" => {
+                if args.len() >= 2 {
+                    Ok(Some(args[0].clone().unwrap_or(args[1].clone())))
+                } else if let Some(value) = args.first() {
+                    Ok(Some(value.clone().unwrap_or(Value::None)))
+                } else {
+                    Ok(Some(Value::None))
+                }
+            }
+            "is_ok" => {
+                if let Some(value) = args.first() {
+                    Ok(Some(Value::Bool(value.is_ok())))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
+            "is_err" => {
+                if let Some(value) = args.first() {
+                    Ok(Some(Value::Bool(value.is_err())))
+                } else {
+                    Ok(Some(Value::Bool(false)))
+                }
+            }
 
             // Unknown function
             _ => Ok(None),

@@ -1,0 +1,74 @@
+import std::io;
+import std::math;
+import std::string;
+import std::core;
+
+func main() {
+    println("================================");
+    println("   ZYRA INTERACTIVE CALCULATOR");
+    println("================================");
+    println("");
+    
+    // Get first number
+    print("Enter first number: ");
+    let input1 = io::input();
+    let parsed1 = string::parse_float(input1);
+    let num1 = core::unwrap_or(parsed1, 0.0);
+    
+    // Get operator
+    print("Enter operator (+, -, *, /, ^): ");
+    let op = io::input();
+    
+    // Get second number  
+    print("Enter second number: ");
+    let input2 = io::input();
+    let parsed2 = string::parse_float(input2);
+    let num2 = core::unwrap_or(parsed2, 0.0);
+    
+    println("");
+    
+    // Trim the operator - using borrowed string for multiple contains checks
+    let trimmed = string::trim(op);
+    
+    // Check which operator was selected using &trimmed (borrowed reference)
+    let is_add = string::contains(&trimmed, "+");
+    let is_sub = string::contains(&trimmed, "-");
+    let is_mul = string::contains(&trimmed, "*");
+    let is_div = string::contains(&trimmed, "/");
+    let is_pow = string::contains(&trimmed, "^");
+    
+    // Show only the selected operation
+    if is_add {
+        let result = num1 + num2;
+        println("${num1} + ${num2} = ${result}");
+    }
+    
+    if is_sub {
+        let result = num1 - num2;
+        println("${num1} - ${num2} = ${result}");
+    }
+    
+    if is_mul {
+        let result = num1 * num2;
+        println("${num1} * ${num2} = ${result}");
+    }
+    
+    if is_div {
+        if num2 != 0.0 {
+            let result = num1 / num2;
+            println("${num1} / ${num2} = ${result}");
+        } else {
+            println("Error: Division by zero!");
+        }
+    }
+    
+    if is_pow {
+        let result = math::pow(&num1, &num2);
+        println("${num1} ^ ${num2} = ${result}");
+    }
+    
+    println("");
+    println("================================");
+    println("     Calculator Complete!");
+    println("================================");
+}

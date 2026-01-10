@@ -237,54 +237,55 @@ impl SemanticAnalyzer {
     ) {
         let functions: Vec<(&str, Vec<(&str, ZyraType)>, ZyraType)> = match module_name {
             "std::math" => vec![
-                ("abs", vec![("x", ZyraType::F32)], ZyraType::F32),
-                ("sqrt", vec![("x", ZyraType::F32)], ZyraType::F32),
+                // Basic math - polymorphic (accepts int or float)
+                ("abs", vec![("x", ZyraType::Unknown)], ZyraType::Unknown),
+                ("sqrt", vec![("x", ZyraType::Unknown)], ZyraType::F64),
                 (
                     "pow",
-                    vec![("base", ZyraType::F32), ("exp", ZyraType::F32)],
-                    ZyraType::F32,
+                    vec![("base", ZyraType::Unknown), ("exp", ZyraType::Unknown)],
+                    ZyraType::Unknown,
                 ),
-                ("sin", vec![("x", ZyraType::F32)], ZyraType::F32),
-                ("cos", vec![("x", ZyraType::F32)], ZyraType::F32),
-                ("tan", vec![("x", ZyraType::F32)], ZyraType::F32),
+                ("sin", vec![("x", ZyraType::Unknown)], ZyraType::F64),
+                ("cos", vec![("x", ZyraType::Unknown)], ZyraType::F64),
+                ("tan", vec![("x", ZyraType::Unknown)], ZyraType::F64),
                 (
                     "min",
-                    vec![("a", ZyraType::F32), ("b", ZyraType::F32)],
-                    ZyraType::F32,
+                    vec![("a", ZyraType::Unknown), ("b", ZyraType::Unknown)],
+                    ZyraType::Unknown,
                 ),
                 (
                     "max",
-                    vec![("a", ZyraType::F32), ("b", ZyraType::F32)],
-                    ZyraType::F32,
+                    vec![("a", ZyraType::Unknown), ("b", ZyraType::Unknown)],
+                    ZyraType::Unknown,
                 ),
-                ("floor", vec![("x", ZyraType::F32)], ZyraType::I32),
-                ("ceil", vec![("x", ZyraType::F32)], ZyraType::I32),
-                ("round", vec![("x", ZyraType::F32)], ZyraType::I32),
+                ("floor", vec![("x", ZyraType::Unknown)], ZyraType::I64),
+                ("ceil", vec![("x", ZyraType::Unknown)], ZyraType::I64),
+                ("round", vec![("x", ZyraType::Unknown)], ZyraType::I64),
                 (
                     "random",
-                    vec![("min", ZyraType::I32), ("max", ZyraType::I32)],
-                    ZyraType::I32,
+                    vec![("min", ZyraType::I64), ("max", ZyraType::I64)],
+                    ZyraType::I64,
                 ),
                 (
                     "lerp",
                     vec![
-                        ("a", ZyraType::F32),
-                        ("b", ZyraType::F32),
-                        ("t", ZyraType::F32),
+                        ("a", ZyraType::Unknown),
+                        ("b", ZyraType::Unknown),
+                        ("t", ZyraType::Unknown),
                     ],
-                    ZyraType::F32,
+                    ZyraType::F64,
                 ),
                 (
                     "clamp",
                     vec![
-                        ("x", ZyraType::F32),
-                        ("min", ZyraType::F32),
-                        ("max", ZyraType::F32),
+                        ("x", ZyraType::Unknown),
+                        ("min", ZyraType::Unknown),
+                        ("max", ZyraType::Unknown),
                     ],
-                    ZyraType::F32,
+                    ZyraType::Unknown,
                 ),
-                ("pi", vec![], ZyraType::F32),
-                ("e", vec![], ZyraType::F32),
+                ("pi", vec![], ZyraType::F64),
+                ("e", vec![], ZyraType::F64),
             ],
             "std::io" => vec![
                 ("print", vec![("value", ZyraType::Unknown)], ZyraType::Void),
@@ -333,8 +334,23 @@ impl SemanticAnalyzer {
                     vec![("s", ZyraType::String), ("delim", ZyraType::String)],
                     ZyraType::Vec(Box::new(ZyraType::String)),
                 ),
-                ("parse_int", vec![("s", ZyraType::String)], ZyraType::I32),
-                ("parse_float", vec![("s", ZyraType::String)], ZyraType::F32),
+                // Numeric parsing
+                ("parse_int", vec![("s", ZyraType::String)], ZyraType::I64),
+                ("parse_float", vec![("s", ZyraType::String)], ZyraType::F64),
+                // String validation
+                ("is_numeric", vec![("s", ZyraType::String)], ZyraType::Bool),
+                ("is_digit", vec![("s", ZyraType::String)], ZyraType::Bool),
+                ("is_alpha", vec![("s", ZyraType::String)], ZyraType::Bool),
+                (
+                    "is_alphanumeric",
+                    vec![("s", ZyraType::String)],
+                    ZyraType::Bool,
+                ),
+                // Type casting functions
+                ("to_i32", vec![("s", ZyraType::String)], ZyraType::I32),
+                ("to_i64", vec![("s", ZyraType::String)], ZyraType::I64),
+                ("to_f32", vec![("s", ZyraType::String)], ZyraType::F32),
+                ("to_f64", vec![("s", ZyraType::String)], ZyraType::F64),
             ],
             "std::fs" => vec![
                 (
@@ -375,6 +391,57 @@ impl SemanticAnalyzer {
                 ("is_linux", vec![], ZyraType::Bool),
                 ("temp_dir", vec![], ZyraType::String),
                 ("pid", vec![], ZyraType::I64),
+            ],
+            "std::list" => vec![
+                // LinkedList - memory-safe doubly linked list
+                ("list_new", vec![], ZyraType::I64),
+                (
+                    "list_push_front",
+                    vec![("list", ZyraType::I64), ("value", ZyraType::Unknown)],
+                    ZyraType::Bool,
+                ),
+                (
+                    "list_push_back",
+                    vec![("list", ZyraType::I64), ("value", ZyraType::Unknown)],
+                    ZyraType::Bool,
+                ),
+                (
+                    "list_pop_front",
+                    vec![("list", ZyraType::I64)],
+                    ZyraType::Unknown,
+                ),
+                (
+                    "list_pop_back",
+                    vec![("list", ZyraType::I64)],
+                    ZyraType::Unknown,
+                ),
+                (
+                    "list_get",
+                    vec![("list", ZyraType::I64), ("index", ZyraType::I64)],
+                    ZyraType::Unknown,
+                ),
+                (
+                    "list_set",
+                    vec![
+                        ("list", ZyraType::I64),
+                        ("index", ZyraType::I64),
+                        ("value", ZyraType::Unknown),
+                    ],
+                    ZyraType::Bool,
+                ),
+                ("list_len", vec![("list", ZyraType::I64)], ZyraType::I64),
+                (
+                    "list_is_empty",
+                    vec![("list", ZyraType::I64)],
+                    ZyraType::Bool,
+                ),
+                (
+                    "list_to_array",
+                    vec![("list", ZyraType::I64)],
+                    ZyraType::Vec(Box::new(ZyraType::Unknown)),
+                ),
+                ("list_clear", vec![("list", ZyraType::I64)], ZyraType::Bool),
+                ("list_delete", vec![("list", ZyraType::I64)], ZyraType::Bool),
             ],
             "std::process" => vec![("exit", vec![("code", ZyraType::I64)], ZyraType::Void)],
             "std::thread" => vec![
@@ -1240,10 +1307,16 @@ impl SemanticAnalyzer {
                     ));
                 }
 
+                // Create separate scope for then block
+                self.enter_scope();
                 self.analyze_block(then_block)?;
+                self.exit_scope();
 
+                // Create separate scope for else block (different scope ID!)
                 if let Some(else_blk) = else_block {
+                    self.enter_scope();
                     self.analyze_block(else_blk)?;
+                    self.exit_scope();
                 }
 
                 Ok(ZyraType::Void)

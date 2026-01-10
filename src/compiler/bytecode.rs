@@ -229,6 +229,65 @@ impl Value {
             _ => true,
         }
     }
+
+    // ===== Option/Result methods =====
+
+    /// Check if value is Some (has a value)
+    pub fn is_some(&self) -> bool {
+        matches!(self, Value::Some(_))
+    }
+
+    /// Check if value is None
+    pub fn is_none(&self) -> bool {
+        matches!(self, Value::None)
+    }
+
+    /// Check if value is Ok (success result)
+    pub fn is_ok(&self) -> bool {
+        matches!(self, Value::Ok(_))
+    }
+
+    /// Check if value is Err (error result)
+    pub fn is_err(&self) -> bool {
+        matches!(self, Value::Err(_))
+    }
+
+    /// Unwrap the inner value from Some/Ok, panics on None/Err
+    /// For safe access, use unwrap_or instead
+    pub fn unwrap(self) -> Value {
+        match self {
+            Value::Some(inner) => *inner,
+            Value::Ok(inner) => *inner,
+            Value::None => panic!("called unwrap() on None"),
+            Value::Err(e) => panic!("called unwrap() on Err: {:?}", e),
+            other => other, // For non-Option/Result types, return as-is
+        }
+    }
+
+    /// Unwrap the inner value or return default on None/Err
+    pub fn unwrap_or(self, default: Value) -> Value {
+        match self {
+            Value::Some(inner) => *inner,
+            Value::Ok(inner) => *inner,
+            Value::None | Value::Err(_) => default,
+            other => other,
+        }
+    }
+
+    /// Wrap a value in Some
+    pub fn some(value: Value) -> Value {
+        Value::Some(Box::new(value))
+    }
+
+    /// Create Ok result
+    pub fn ok(value: Value) -> Value {
+        Value::Ok(Box::new(value))
+    }
+
+    /// Create Err result
+    pub fn err(value: Value) -> Value {
+        Value::Err(Box::new(value))
+    }
 }
 
 impl fmt::Display for Value {

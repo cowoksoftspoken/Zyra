@@ -29,12 +29,16 @@ pub struct Binding {
     pub ownership: OwnershipState,
     pub defined_at: usize,
     pub scope_depth: usize,
+    pub scope_id: usize, // Unique scope identifier
 }
 
 /// Ownership checker tracks variable ownership through scopes
 pub struct OwnershipChecker {
     bindings: HashMap<String, Binding>,
     scope_depth: usize,
+    scope_id: usize,         // Current unique scope ID
+    next_scope_id: usize,    // Counter for generating unique scope IDs
+    scope_stack: Vec<usize>, // Stack of scope IDs for tracking nested scopes
 }
 
 impl OwnershipChecker {
@@ -42,20 +46,27 @@ impl OwnershipChecker {
         Self {
             bindings: HashMap::new(),
             scope_depth: 0,
+            scope_id: 0,
+            next_scope_id: 1,
+            scope_stack: vec![0], // Root scope
         }
     }
 
-    /// Enter a new scope
+    /// Enter a new scope with unique ID
     pub fn enter_scope(&mut self) {
         self.scope_depth += 1;
+        self.scope_id = self.next_scope_id;
+        self.next_scope_id += 1;
+        self.scope_stack.push(self.scope_id);
     }
 
     /// Exit current scope, dropping all bindings in this scope
     pub fn exit_scope(&mut self) -> Vec<String> {
+        let current_scope_id = self.scope_id;
         let dropped: Vec<_> = self
             .bindings
             .iter()
-            .filter(|(_, b)| b.scope_depth == self.scope_depth)
+            .filter(|(_, b)| b.scope_id == current_scope_id)
             .map(|(name, _)| name.clone())
             .collect();
 
@@ -64,41 +75,69 @@ impl OwnershipChecker {
         }
 
         self.scope_depth -= 1;
+        self.scope_stack.pop();
+        // Restore previous scope ID
+        self.scope_id = *self.scope_stack.last().unwrap_or(&0);
         dropped
     }
 
-    /// Define a new binding
+    /// Define a new binding with mangled name for scoped uniqueness
     pub fn define(&mut self, name: &str, mutable: bool, line: usize) -> Result<(), OwnershipError> {
-        if self.bindings.contains_key(name) {
-            let existing = &self.bindings[name];
-            if existing.scope_depth == self.scope_depth {
-                return Err(OwnershipError::AlreadyDefined {
-                    name: name.to_string(),
-                    original_line: existing.defined_at,
-                    duplicate_line: line,
-                });
-            }
+        // Create a scoped key that includes the scope_id for uniqueness
+        let scoped_key = format!("{}@{}", name, self.scope_id);
+
+        // Check if the SAME variable already exists in the SAME scope
+        if let Some(existing) = self.bindings.get(&scoped_key) {
+            return Err(OwnershipError::AlreadyDefined {
+                name: name.to_string(),
+                original_line: existing.defined_at,
+                duplicate_line: line,
+            });
         }
 
+        // Also check the plain name for shadowing in outer scope
+        // This allows inner scope to shadow outer scope variables
+
         self.bindings.insert(
-            name.to_string(),
+            scoped_key,
             Binding {
                 name: name.to_string(),
                 mutable,
                 ownership: OwnershipState::Owned,
                 defined_at: line,
                 scope_depth: self.scope_depth,
+                scope_id: self.scope_id,
             },
         );
 
         Ok(())
     }
 
+    /// Find the scoped key for a binding, searching from current scope up to root
+    fn find_binding_key(&self, name: &str) -> Option<String> {
+        // Search from current scope up to root
+        for &scope_id in self.scope_stack.iter().rev() {
+            let scoped_key = format!("{}@{}", name, scope_id);
+            if self.bindings.contains_key(&scoped_key) {
+                return Some(scoped_key);
+            }
+        }
+        None
+    }
+
     /// Use a binding (read access)
     pub fn use_binding(&self, name: &str, line: usize) -> Result<&Binding, OwnershipError> {
+        // Search for binding in scope hierarchy
+        let key = self
+            .find_binding_key(name)
+            .ok_or_else(|| OwnershipError::NotDefined {
+                name: name.to_string(),
+                at_line: line,
+            })?;
+
         let binding = self
             .bindings
-            .get(name)
+            .get(&key)
             .ok_or_else(|| OwnershipError::NotDefined {
                 name: name.to_string(),
                 at_line: line,
@@ -130,12 +169,14 @@ impl OwnershipChecker {
             });
         }
 
-        // Mark as moved
-        if let Some(b) = self.bindings.get_mut(from) {
-            b.ownership = OwnershipState::Moved {
-                to: to.to_string(),
-                at_line: line,
-            };
+        // Mark as moved - use scoped key
+        if let Some(key) = self.find_binding_key(from) {
+            if let Some(b) = self.bindings.get_mut(&key) {
+                b.ownership = OwnershipState::Moved {
+                    to: to.to_string(),
+                    at_line: line,
+                };
+            }
         }
 
         Ok(())
@@ -143,9 +184,16 @@ impl OwnershipChecker {
 
     /// Assign to a mutable binding
     pub fn assign(&mut self, name: &str, line: usize) -> Result<(), OwnershipError> {
+        let key = self
+            .find_binding_key(name)
+            .ok_or_else(|| OwnershipError::NotDefined {
+                name: name.to_string(),
+                at_line: line,
+            })?;
+
         let binding = self
             .bindings
-            .get(name)
+            .get(&key)
             .ok_or_else(|| OwnershipError::NotDefined {
                 name: name.to_string(),
                 at_line: line,
@@ -178,9 +226,16 @@ impl OwnershipChecker {
         borrower: &str,
         line: usize,
     ) -> Result<(), OwnershipError> {
+        let key = self
+            .find_binding_key(name)
+            .ok_or_else(|| OwnershipError::NotDefined {
+                name: name.to_string(),
+                at_line: line,
+            })?;
+
         let binding = self
             .bindings
-            .get_mut(name)
+            .get_mut(&key)
             .ok_or_else(|| OwnershipError::NotDefined {
                 name: name.to_string(),
                 at_line: line,
@@ -221,9 +276,16 @@ impl OwnershipChecker {
         borrower: &str,
         line: usize,
     ) -> Result<(), OwnershipError> {
+        let key = self
+            .find_binding_key(name)
+            .ok_or_else(|| OwnershipError::NotDefined {
+                name: name.to_string(),
+                at_line: line,
+            })?;
+
         let binding = self
             .bindings
-            .get_mut(name)
+            .get_mut(&key)
             .ok_or_else(|| OwnershipError::NotDefined {
                 name: name.to_string(),
                 at_line: line,
@@ -264,7 +326,8 @@ impl OwnershipChecker {
 
     /// Get binding info if it exists
     pub fn get(&self, name: &str) -> Option<&Binding> {
-        self.bindings.get(name)
+        self.find_binding_key(name)
+            .and_then(|key| self.bindings.get(&key))
     }
 }
 

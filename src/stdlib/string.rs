@@ -239,3 +239,86 @@ pub fn string_from_chars(arr: &Value) -> String {
         String::new()
     }
 }
+
+// ===== String Validation Functions =====
+
+/// Check if string contains only numeric characters (can be parsed as number)
+pub fn string_is_numeric(s: &str) -> bool {
+    let trimmed = s.trim();
+    if trimmed.is_empty() {
+        return false;
+    }
+    // Allow optional leading sign and one decimal point
+    let mut has_decimal = false;
+    let mut chars = trimmed.chars().peekable();
+
+    // Skip leading sign
+    if matches!(chars.peek(), Some('+') | Some('-')) {
+        chars.next();
+    }
+
+    if chars.peek().is_none() {
+        return false; // Just a sign
+    }
+
+    for c in chars {
+        if c == '.' {
+            if has_decimal {
+                return false; // Multiple decimal points
+            }
+            has_decimal = true;
+        } else if !c.is_ascii_digit() {
+            return false;
+        }
+    }
+    true
+}
+
+/// Check if string contains only digit characters (0-9)
+pub fn string_is_digit(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_ascii_digit())
+}
+
+/// Check if string contains only alphabetic characters
+pub fn string_is_alpha(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_alphabetic())
+}
+
+/// Check if string contains only alphanumeric characters
+pub fn string_is_alphanumeric(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(|c| c.is_alphanumeric())
+}
+
+// ===== Type Casting Functions =====
+
+/// Convert string to i32
+pub fn string_to_i32(s: &str) -> Value {
+    match s.trim().parse::<i32>() {
+        Ok(n) => Value::Int(n as i64),
+        Err(_) => Value::None,
+    }
+}
+
+/// Convert string to i64
+pub fn string_to_i64(s: &str) -> Value {
+    match s.trim().parse::<i64>() {
+        Ok(n) => Value::Int(n),
+        Err(_) => Value::None,
+    }
+}
+
+/// Convert string to f32
+pub fn string_to_f32(s: &str) -> Value {
+    match s.trim().parse::<f32>() {
+        Ok(f) => Value::Float(f as f64),
+        Err(_) => Value::None,
+    }
+}
+
+/// Convert string to f64
+pub fn string_to_f64(s: &str) -> Value {
+    match s.trim().parse::<f64>() {
+        Ok(f) => Value::Float(f),
+        Err(_) => Value::None,
+    }
+}
