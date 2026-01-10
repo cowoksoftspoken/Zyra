@@ -8,7 +8,7 @@
 
   <p>
     <a href="https://github.com/cowoksoftspoken/Zyra/releases/latest">
-      <img src="https://img.shields.io/badge/version-1.0.1-blue.svg?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/version-1.0.2-blue.svg?style=flat-square" alt="Version">
     </a>
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="License">
