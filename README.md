@@ -8,7 +8,7 @@
 
   <p>
     <a href="https://github.com/cowoksoftspoken/Zyra/releases/latest">
-      <img src="https://img.shields.io/badge/version-1.0.1-blue.svg?style=flat-square" alt="Version">
+      <img src="https://img.shields.io/badge/version-1.0.2-blue.svg?style=flat-square" alt="Version">
     </a>
     <a href="LICENSE">
       <img src="https://img.shields.io/badge/license-MIT-green.svg?style=flat-square" alt="License">
@@ -16,6 +16,7 @@
     <a href="https://github.com/cowoksoftspoken/Zyra/actions">
       <img src="https://img.shields.io/github/actions/workflow/status/cowoksoftspoken/Zyra/rust.yml?branch=main&style=flat-square" alt="Build Status">
     </a>
+    <img src="https://img.shields.io/badge/platform-windows%20%7C%20linux%20%7C%20macos-blue" alt="Platform badge">
   </p>
   
   <h3>⚡ Powerful like Rust, readable like Python, productive like modern languages.</h3>
