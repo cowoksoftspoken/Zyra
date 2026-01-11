@@ -191,15 +191,26 @@ pub fn create_window(width: i64, height: i64, title: &str) -> Value {
 fn try_set_default_icon() {
     #[cfg(target_os = "windows")]
     {
+        // Get the executable's directory for installed version
+        let exe_dir = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf()))
+            .and_then(|d| d.parent().map(|p| p.to_path_buf()));
+
         // Build dynamic paths for Windows installed locations
         let program_files =
             std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string());
         let local_app_data = std::env::var("LOCALAPPDATA").unwrap_or_else(|_| "".to_string());
 
-        let installed_paths = vec![
+        let mut installed_paths = vec![
             format!("{}\\Zyra\\icons\\zyra.ico", program_files),
             format!("{}\\Zyra\\icons\\zyra.ico", local_app_data),
         ];
+
+        // Add executable-relative path (e.g., C:\Program Files\Zyra\bin\..\icons\)
+        if let Some(ref dir) = exe_dir {
+            installed_paths.insert(0, format!("{}\\icons\\zyra.ico", dir.display()));
+        }
 
         // Static development paths
         let dev_paths = [

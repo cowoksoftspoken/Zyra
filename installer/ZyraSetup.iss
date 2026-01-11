@@ -38,9 +38,7 @@ PrivilegesRequired=admin
 ArchitecturesInstallIn64BitMode=x64compatible
 ChangesEnvironment=yes
 
-; Appearance
-WizardImageFile=compiler:WizModernImage.bmp
-WizardSmallImageFile=compiler:WizModernSmallImage.bmp
+; Appearance - using modern built-in wizard images (removed deprecated directives)
 
 [Languages]
 Name: "english"; MessagesFile: "compiler:Default.isl"
@@ -64,10 +62,10 @@ Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{group}\Zyra Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""{app}\bin\zyra.exe"" --version"; WorkingDir: "{userdocs}"; IconFilename: "{app}\icons\zyra.ico"
+Name: "{group}\Zyra Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""{app}\bin\zyra.exe"" --version"; WorkingDir: "{app}"; IconFilename: "{app}\icons\zyra.ico"
 Name: "{group}\Zyra Documentation"; Filename: "{app}\README.md"
 Name: "{group}\{cm:UninstallProgram,{#MyAppName}}"; Filename: "{uninstallexe}"; IconFilename: "{app}\icons\zyra.ico"
-Name: "{autodesktop}\Zyra"; Filename: "{cmd}"; Parameters: "/K ""{app}\bin\zyra.exe"" --help"; WorkingDir: "{userdocs}"; IconFilename: "{app}\icons\zyra.ico"; Tasks: desktopicon
+Name: "{autodesktop}\Zyra"; Filename: "{cmd}"; Parameters: "/K ""{app}\bin\zyra.exe"" --help"; WorkingDir: "{app}"; IconFilename: "{app}\icons\zyra.ico"; Tasks: desktopicon
 
 [Registry]
 ; Add to PATH

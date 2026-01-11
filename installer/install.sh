@@ -3,16 +3,20 @@
 # Zyra Programming Language Installer
 # Linux Installation Script
 #
-# This script installs Zyra to your system by:
-# 1. Using prebuilt binary from ./bin/linux/zyra if available
-# 2. Falling back to building from source if binary not found
-# 3. Creating installation directory
-# 4. Adding Zyra to PATH
+# This script installs Zyra by:
+# 1. Downloading prebuilt binary from GitHub repository (installer/bin/linux/zyra)
+# 2. If download fails, cloning the repo and building from source
+# 3. Setting up PATH
 #
 # Run with sudo for system-wide installation,
 # or run normally for user-level installation.
 
 set -e
+
+# Version
+VERSION="1.0.2"
+GITHUB_REPO="cowoksoftspoken/Zyra"
+GITHUB_RAW="https://raw.githubusercontent.com/${GITHUB_REPO}/main"
 
 # Colors
 RED='\033[0;31m'
@@ -30,13 +34,16 @@ err() { echo -e "  ${RED}✗${NC} $1"; }
 if [ "$EUID" -eq 0 ]; then
     IS_ROOT=true
     INSTALL_DIR="/usr/local"
+    SHARE_DIR="/usr/local/share/zyra"
 else
     IS_ROOT=false
     INSTALL_DIR="$HOME/.local"
+    SHARE_DIR="$HOME/.local/share/zyra"
 fi
 
 BIN_DIR="$INSTALL_DIR/bin"
 EXE_PATH="$BIN_DIR/zyra"
+ICONS_DIR="$SHARE_DIR/icons"
 
 # Parse arguments
 UNINSTALL=false
@@ -76,89 +83,127 @@ if [ "$UNINSTALL" = true ]; then
         warn "Zyra not found at $EXE_PATH"
     fi
     
+    if [ -d "$SHARE_DIR" ]; then
+        step "Removing $SHARE_DIR..."
+        rm -rf "$SHARE_DIR"
+    fi
+    
     echo -e "\n${GREEN}✓ Zyra has been uninstalled.${NC}"
     exit 0
 fi
 
 # Install
 header "Zyra Programming Language Installer"
-echo "  Version: 1.0.2"
+echo "  Version: $VERSION"
 echo "  Install Dir: $INSTALL_DIR"
 echo "  Mode: $([ "$IS_ROOT" = true ] && echo 'System-wide' || echo 'User-level')"
 
-# Find project root (directory containing Cargo.toml)
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
+# Create directories
+header "Creating Directories"
+mkdir -p "$BIN_DIR"
+mkdir -p "$ICONS_DIR"
+step "Created $BIN_DIR"
+step "Created $ICONS_DIR"
 
-# Check for prebuilt binary
-PREBUILT_BINARY="$SCRIPT_DIR/bin/linux/zyra"
-BUILD_BINARY="$PROJECT_ROOT/target/release/zyra"
-USE_PREBUILT=false
+# Try to get binary
+BINARY_OBTAINED=false
 
-header "Checking Binary"
-if [ "$FORCE_BUILD" = false ] && [ -f "$PREBUILT_BINARY" ]; then
-    step "Found prebuilt binary at $PREBUILT_BINARY"
+if [ "$FORCE_BUILD" = false ]; then
+    header "Downloading Prebuilt Binary"
     
-    # Verify it's a valid Linux ELF binary
-    if file "$PREBUILT_BINARY" | grep -q "ELF"; then
-        step "Binary is valid ELF executable"
-        USE_PREBUILT=true
+    # Download from GitHub raw (installer/bin/linux/zyra)
+    DOWNLOAD_URL="${GITHUB_RAW}/installer/bin/linux/zyra"
+    step "Downloading from: $DOWNLOAD_URL"
+    
+    if curl -fsSL "$DOWNLOAD_URL" -o "$EXE_PATH.tmp" 2>/dev/null; then
+        # Verify it's an ELF binary (not HTML error page)
+        if file "$EXE_PATH.tmp" | grep -q "ELF"; then
+            mv "$EXE_PATH.tmp" "$EXE_PATH"
+            chmod +x "$EXE_PATH"
+            step "Downloaded prebuilt binary successfully!"
+            BINARY_OBTAINED=true
+        else
+            rm -f "$EXE_PATH.tmp"
+            warn "Downloaded file is not a valid ELF binary"
+        fi
     else
-        warn "Prebuilt binary is not a valid ELF executable, will build from source"
-    fi
-else
-    if [ "$FORCE_BUILD" = true ]; then
-        step "Force build requested, will compile from source"
-    else
-        warn "Prebuilt binary not found at $PREBUILT_BINARY"
+        rm -f "$EXE_PATH.tmp"
+        warn "Could not download prebuilt binary"
     fi
 fi
 
-# Build from source if needed
-if [ "$USE_PREBUILT" = false ]; then
+# If no binary obtained, clone and build
+if [ "$BINARY_OBTAINED" = false ]; then
     header "Building from Source"
     
     # Check for Rust/Cargo
-    if command -v cargo &> /dev/null; then
-        CARGO_VERSION=$(cargo --version)
-        step "Cargo found: $CARGO_VERSION"
-    else
+    if ! command -v cargo &> /dev/null; then
         err "Cargo not found. Please install Rust from https://rustup.rs/"
-        err "Or provide a prebuilt binary at $PREBUILT_BINARY"
         exit 1
     fi
     
-    if [ ! -f "$PROJECT_ROOT/Cargo.toml" ]; then
-        err "Could not find Cargo.toml. Please run this script from the installer directory."
+    CARGO_VERSION=$(cargo --version)
+    step "Cargo found: $CARGO_VERSION"
+    
+    # Check for git
+    if ! command -v git &> /dev/null; then
+        err "Git not found. Please install git."
         exit 1
     fi
     
-    step "Building release binary..."
-    cd "$PROJECT_ROOT"
-    cargo build --release
+    # Clone repository
+    TEMP_DIR=$(mktemp -d)
+    step "Cloning Zyra repository..."
     
-    if [ $? -ne 0 ]; then
-        err "Build failed"
+    if git clone --depth 1 "https://github.com/${GITHUB_REPO}.git" "$TEMP_DIR/Zyra" 2>/dev/null; then
+        cd "$TEMP_DIR/Zyra"
+        
+        step "Building release binary (this may take a few minutes)..."
+        if cargo build --release; then
+            cp "target/release/zyra" "$EXE_PATH"
+            chmod +x "$EXE_PATH"
+            step "Build successful!"
+            BINARY_OBTAINED=true
+            
+            # Also copy icons
+            if [ -d "extensions/ZyraFileIcons/icons" ]; then
+                cp extensions/ZyraFileIcons/icons/*.png "$ICONS_DIR/" 2>/dev/null || true
+                cp extensions/ZyraFileIcons/icons/*.ico "$ICONS_DIR/" 2>/dev/null || true
+                step "Copied icons to $ICONS_DIR"
+            fi
+        else
+            err "Build failed"
+        fi
+        
+        cd - > /dev/null
+        rm -rf "$TEMP_DIR"
+    else
+        err "Failed to clone repository"
+        rm -rf "$TEMP_DIR"
         exit 1
     fi
-    step "Build successful!"
 fi
 
-# Create install directory
-header "Installing"
-if [ ! -d "$BIN_DIR" ]; then
-    step "Creating $BIN_DIR..."
-    mkdir -p "$BIN_DIR"
+if [ "$BINARY_OBTAINED" = false ]; then
+    err "Could not obtain Zyra binary"
+    exit 1
 fi
 
-# Copy binary
-step "Copying zyra to $EXE_PATH..."
-if [ "$USE_PREBUILT" = true ]; then
-    cp "$PREBUILT_BINARY" "$EXE_PATH"
+# Download icons if not already present
+header "Setting up Icons"
+if [ ! -f "$ICONS_DIR/zyra.png" ] && [ ! -f "$ICONS_DIR/zyra.ico" ]; then
+    step "Downloading icons..."
+    curl -fsSL "${GITHUB_RAW}/extensions/ZyraFileIcons/icons/zyra.png" -o "$ICONS_DIR/zyra.png" 2>/dev/null || true
+    curl -fsSL "${GITHUB_RAW}/extensions/ZyraFileIcons/icons/zyra.ico" -o "$ICONS_DIR/zyra.ico" 2>/dev/null || true
+    
+    if [ -f "$ICONS_DIR/zyra.png" ] || [ -f "$ICONS_DIR/zyra.ico" ]; then
+        step "Icons downloaded to $ICONS_DIR"
+    else
+        warn "Could not download icons (non-critical)"
+    fi
 else
-    cp "$BUILD_BINARY" "$EXE_PATH"
+    step "Icons already present"
 fi
-chmod +x "$EXE_PATH"
 
 # Check PATH
 header "Configuring PATH"
@@ -176,7 +221,6 @@ if [[ ":$PATH:" != *":$BIN_DIR:"* ]]; then
     fi
     
     if [ -n "$SHELL_CONFIG" ]; then
-        # Check if already added
         if ! grep -q "export PATH.*$BIN_DIR" "$SHELL_CONFIG" 2>/dev/null; then
             echo "" >> "$SHELL_CONFIG"
             echo "# Zyra Programming Language" >> "$SHELL_CONFIG"
@@ -196,10 +240,10 @@ fi
 header "Verification"
 export PATH="$PATH:$BIN_DIR"
 if [ -x "$EXE_PATH" ]; then
-    VERSION=$("$EXE_PATH" --version 2>/dev/null || echo "unknown")
-    step "Installed: $VERSION"
+    VERSION_OUTPUT=$("$EXE_PATH" --version 2>/dev/null || echo "unknown")
+    step "Installed: $VERSION_OUTPUT"
 else
-    warn "Could not verify installation"
+    warn " Could not verify installation"
 fi
 
 echo ""
