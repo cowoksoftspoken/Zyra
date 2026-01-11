@@ -26,7 +26,7 @@ AppUpdatesURL={#MyAppURL}/releases
 DefaultDirName={autopf}\Zyra
 DefaultGroupName=Zyra
 AllowNoIcons=yes
-LicenseFile=..\LICENSE
+LicenseFile=..\LICENSE-APACHE
 OutputDir=..\dist
 OutputBaseFilename=ZyraSetup-{#MyAppVersion}
 SetupIconFile=..\extensions\ZyraFileIcons\icons\zyra.ico
@@ -59,7 +59,7 @@ Source: "..\installer\*"; DestDir: "{app}\installer"; Flags: ignoreversion recur
 
 ; Documentation
 Source: "..\README.md"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\LICENSE-APACHE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\Zyra Command Prompt"; Filename: "{cmd}"; Parameters: "/K ""{app}\bin\zyra.exe"" --version"; WorkingDir: "{app}"; IconFilename: "{app}\icons\zyra.ico"
