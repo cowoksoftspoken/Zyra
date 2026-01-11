@@ -12,5 +12,5 @@ license = ["MIT"]
 # not supported yet
 
 [build]
-main_entry = "main.zr"
+main = "main.zr"
 output = "./"

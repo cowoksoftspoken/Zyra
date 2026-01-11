@@ -22,73 +22,144 @@ use zyra::vm::VM;
 
 /// Project configuration from zyra.toml
 struct ProjectConfig {
-    main_entry: String,
-    output: String,
+    main: Option<String>,
+    output: Option<String>,
 }
 
-/// Find zyra.toml in current directory and parse it
-fn find_project_config() -> Option<ProjectConfig> {
-    let toml_path = Path::new("zyra.toml");
-    if !toml_path.exists() {
-        return None;
+/// Configuration validation result
+enum ConfigResult {
+    Valid(ProjectConfig),
+    InvalidMainEntry(String),
+    NoConfig,
+}
+
+/// Find zyra.toml - first check source file's directory, then current directory
+fn find_project_config_for_file(file_path: Option<&str>) -> ConfigResult {
+    // First try the source file's directory
+    if let Some(path) = file_path {
+        let source_path = Path::new(path);
+        if let Some(parent) = source_path.parent() {
+            let toml_in_source_dir = parent.join("zyra.toml");
+            if toml_in_source_dir.exists() {
+                return parse_project_config(&toml_in_source_dir);
+            }
+        }
     }
 
-    let content = fs::read_to_string(toml_path).ok()?;
+    // Fall back to current directory
+    let toml_path = Path::new("zyra.toml");
+    if toml_path.exists() {
+        return parse_project_config(toml_path);
+    }
 
-    // Simple TOML parsing for main_entry and output
-    let mut main_entry = String::from("main.zr");
-    let mut output = String::from("./");
+    ConfigResult::NoConfig
+}
+
+/// Parse zyra.toml from given path
+fn parse_project_config(toml_path: &Path) -> ConfigResult {
+    let content = match fs::read_to_string(toml_path) {
+        Ok(c) => c,
+        Err(_) => return ConfigResult::NoConfig,
+    };
+
+    // Simple TOML parsing for main and output
+    let mut main: Option<String> = None;
+    let mut output: Option<String> = None;
 
     for line in content.lines() {
         let line = line.trim();
+        // Parse "main = ..." in [build] section
+        if line.starts_with("main") && !line.starts_with("main_entry") {
+            if let Some(value) = line.split('=').nth(1) {
+                let val = value.trim().trim_matches('"').to_string();
+                if !val.is_empty() {
+                    main = Some(val);
+                }
+            }
+        }
+        // Also support legacy main_entry for backwards compatibility
         if line.starts_with("main_entry") {
             if let Some(value) = line.split('=').nth(1) {
-                main_entry = value.trim().trim_matches('"').to_string();
+                let val = value.trim().trim_matches('"').to_string();
+                if !val.is_empty() && main.is_none() {
+                    main = Some(val);
+                }
             }
         }
         if line.starts_with("output") {
             if let Some(value) = line.split('=').nth(1) {
-                output = value.trim().trim_matches('"').to_string();
+                let val = value.trim().trim_matches('"').to_string();
+                if !val.is_empty() {
+                    output = Some(val);
+                }
             }
         }
     }
 
-    // Validate main_entry has valid extension
-    if !main_entry.ends_with(".zr") && !main_entry.ends_with(".zy") && !main_entry.ends_with(".za")
-    {
-        eprintln!(
-            "{}: main_entry must be main.zr, main.zy, or main.za",
-            "ConfigError".red()
-        );
-        return None;
-    }
-
-    Some(ProjectConfig { main_entry, output })
-}
-
-/// Get the main entry file, either from arg or zyra.toml
-fn get_main_entry(args: &[String], arg_index: usize) -> Option<String> {
-    // If file argument provided, use it
-    if args.len() > arg_index {
-        return Some(args[arg_index].clone());
-    }
-
-    // Otherwise check for zyra.toml
-    if let Some(config) = find_project_config() {
-        let entry_path = Path::new(&config.main_entry);
-        if entry_path.exists() {
-            return Some(config.main_entry);
-        } else {
-            eprintln!(
-                "{}: main_entry '{}' not found",
-                "ConfigError".red(),
-                config.main_entry
-            );
-            return None;
+    // Validate main has valid extension if present
+    if let Some(ref entry) = main {
+        if !entry.ends_with(".zr") && !entry.ends_with(".zy") && !entry.ends_with(".za") {
+            return ConfigResult::InvalidMainEntry(entry.clone());
         }
     }
 
-    None
+    ConfigResult::Valid(ProjectConfig { main, output })
+}
+
+/// Get the main entry file, either from arg or zyra.toml
+/// If zyra.toml exists, main must be specified even when running with explicit file
+fn get_main_entry(args: &[String], arg_index: usize) -> Option<String> {
+    let explicit_file = if args.len() > arg_index {
+        Some(args[arg_index].clone())
+    } else {
+        None
+    };
+
+    // Check for zyra.toml - if it exists, main must be configured
+    // Also check in the explicit file's directory
+    match find_project_config_for_file(explicit_file.as_deref()) {
+        ConfigResult::Valid(config) => {
+            if config.main.is_none() {
+                eprintln!(
+                    "{}: main is not specified in zyra.toml",
+                    "ConfigError".red()
+                );
+                eprintln!("  Add [build] section with main = \"main.zr\"");
+                return None;
+            }
+
+            // If explicit file provided, use it; otherwise use config.main
+            if let Some(file) = explicit_file {
+                return Some(file);
+            }
+
+            let entry = config.main.unwrap();
+            let entry_path = Path::new(&entry);
+            if entry_path.exists() {
+                return Some(entry);
+            } else {
+                eprintln!("{}: main '{}' not found", "ConfigError".red(), entry);
+                eprintln!("  The file specified in zyra.toml does not exist.");
+                return None;
+            }
+        }
+        ConfigResult::InvalidMainEntry(entry) => {
+            eprintln!(
+                "{}: main '{}' has invalid extension",
+                "ConfigError".red(),
+                entry
+            );
+            eprintln!("  main must end with .zr, .zy, or .za");
+            return None;
+        }
+        ConfigResult::NoConfig => {
+            // No zyra.toml found - allow running explicit file
+            if let Some(file) = explicit_file {
+                return Some(file);
+            }
+            return None;
+        }
+    }
 }
 
 fn main() {
@@ -403,27 +474,33 @@ fn build_file_internal(path: &str) -> Result<String, ZyraError> {
     let mut output_path = Path::new(path).with_extension("zyc");
 
     // Check for project config output directory
-    if let Some(config) = find_project_config() {
-        let out_dir = Path::new(&config.output);
-        if out_dir != Path::new("./") && out_dir != Path::new(".") {
-            // Create output directory if it doesn't exist
-            if !out_dir.exists() {
-                fs::create_dir_all(out_dir).map_err(|e| {
-                    ZyraError::new(
-                        "FileError",
-                        &format!(
-                            "Could not create output directory '{}': {}",
-                            config.output, e
-                        ),
-                        None,
-                    )
-                })?;
-            }
+    if let ConfigResult::Valid(config) = find_project_config_for_file(Some(path)) {
+        if let Some(ref output_dir) = config.output {
+            let out_dir = Path::new(output_dir);
+            if out_dir != Path::new("./") && out_dir != Path::new(".") {
+                // Create output directory if it doesn't exist
+                if !out_dir.exists() {
+                    fs::create_dir_all(out_dir).map_err(|e| {
+                        ZyraError::new(
+                            "FileError",
+                            &format!("Could not create output directory '{}': {}", output_dir, e),
+                            None,
+                        )
+                    })?;
+                }
 
-            // Construct new path: output_dir + filename.zyc
-            if let Some(filename) = output_path.file_name() {
-                output_path = out_dir.join(filename);
+                // Construct new path: output_dir + filename.zyc
+                if let Some(filename) = output_path.file_name() {
+                    output_path = out_dir.join(filename);
+                }
             }
+        } else {
+            // Output not specified in zyra.toml
+            return Err(ZyraError::new(
+                "ConfigError",
+                "output is not specified in zyra.toml [build] section",
+                None,
+            ));
         }
     }
 
@@ -458,17 +535,18 @@ fn init_project(name: &str) -> Result<(), ZyraError> {
         PathBuf::from(name)
     };
 
-    let project_name = if name == "." {
-        project_dir
-            .file_name()
-            .map(|n| n.to_string_lossy().to_string())
-            .unwrap_or_else(|| "zyra_project".to_string())
-    } else {
-        name.to_string()
-    };
+    // Extract project name from the path (just the last component)
+    let project_name = project_dir
+        .file_name()
+        .map(|n| n.to_string_lossy().to_string())
+        .unwrap_or_else(|| "zyra_project".to_string());
 
-    // Create project directory
-    if name != "." {
+    // Check if zyra.toml already exists (re-initialization)
+    let toml_file = project_dir.join("zyra.toml");
+    let is_reinit = toml_file.exists();
+
+    // Create project directory if it doesn't exist
+    if name != "." && !project_dir.exists() {
         fs::create_dir_all(&project_dir).map_err(|e| {
             ZyraError::new(
                 "InitError",
@@ -478,35 +556,39 @@ fn init_project(name: &str) -> Result<(), ZyraError> {
         })?;
     }
 
-    // Create src directory
+    // Only create src directory if not re-initializing
     let src_dir = project_dir.join("src");
-    fs::create_dir_all(&src_dir).map_err(|e| {
-        ZyraError::new(
-            "InitError",
-            &format!("Cannot create src directory: {}", e),
-            None,
-        )
-    })?;
+    if !is_reinit && !src_dir.exists() {
+        fs::create_dir_all(&src_dir).map_err(|e| {
+            ZyraError::new(
+                "InitError",
+                &format!("Cannot create src directory: {}", e),
+                None,
+            )
+        })?;
+    }
 
-    // Create main.zr
+    // Only create main.zr if not re-initializing and it doesn't exist
     let main_file = project_dir.join("main.zr");
-    let main_content = format!(
-        r#"// {} - Main Entry Point
+    if !is_reinit && !main_file.exists() {
+        let main_content = format!(
+            r#"// {} - Main Entry Point
 //
-// Run with: zyra run main.zr
+// Run with: zyra run
 
 func main() {{
     println("Hello, {}!");
 }}
 "#,
-        project_name, project_name
-    );
+            project_name, project_name
+        );
 
-    fs::write(&main_file, main_content)
-        .map_err(|e| ZyraError::new("InitError", &format!("Cannot create main.zr: {}", e), None))?;
+        fs::write(&main_file, main_content).map_err(|e| {
+            ZyraError::new("InitError", &format!("Cannot create main.zr: {}", e), None)
+        })?;
+    }
 
-    // Create zyra.toml
-    let toml_file = project_dir.join("zyra.toml");
+    // Always create/update zyra.toml
     let toml_content = format!(
         r#"[project]
 name = "{}"
@@ -522,7 +604,7 @@ license = ["MIT"]
 # not supported yet
 
 [build]
-main_entry = "main.zr"
+main = "main.zr"
 output = "./"
 "#,
         project_name
@@ -537,15 +619,24 @@ output = "./"
     })?;
 
     // Success message
-    println!("{}", "✓ Zyra project initialized!".green().bold());
-    println!();
-    println!("  Created:");
-    println!("    {} - project entry point", "main.zr".cyan());
-    println!("    {} - project configuration", "zyra.toml".cyan());
-    println!("    {} - source directory", "src/".cyan());
-    println!();
-    println!("  Get started:");
-    println!("    {} {}", "zyra run".green(), "main.zr");
+    if is_reinit {
+        println!("{}", "✓ Zyra project reinitialized!".green().bold());
+        println!();
+        println!("  Updated:");
+        println!("    {} - project configuration", "zyra.toml".cyan());
+        println!();
+        println!("  Note: Existing files were not modified.");
+    } else {
+        println!("{}", "✓ Zyra project initialized!".green().bold());
+        println!();
+        println!("  Created:");
+        println!("    {} - project entry point", "main.zr".cyan());
+        println!("    {} - project configuration", "zyra.toml".cyan());
+        println!("    {} - source directory", "src/".cyan());
+        println!();
+        println!("  Get started:");
+        println!("    {}", "zyra run".green());
+    }
 
     Ok(())
 }

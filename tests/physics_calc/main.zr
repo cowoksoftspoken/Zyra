@@ -6,7 +6,6 @@
 // - Mathematical operations
 
 
-
 // Calculate kinetic energy: E = 0.5 * m * v^2
 func kinetic_energy(mass: f32, velocity: f32) -> f32 {
     return 0.5 * mass * velocity * velocity;

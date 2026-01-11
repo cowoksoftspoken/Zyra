@@ -2,9 +2,15 @@
 name = "physics_calc"
 version = "0.1.0"
 edition = "2025"
+zyra = ">=1.0.2"
+description = "-"
+authors = "-"
+license = ["MIT"]
 
 [dependencies]
 # Add dependencies here
+# not supported yet
 
 [build]
-entry = "main.zr"
+main = "main.zr"
+output = "./"
