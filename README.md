@@ -234,7 +234,7 @@ edition = "2025"
 zyra = ">=1.0.0"
 
 [build]
-main_entry = "main.zr"
+main = "main.zr"
 output = "./dist/"
 ```
 
