@@ -119,7 +119,7 @@ zyra run
 ```rust
 let score = 0;              // Inferred as int
 let mut speed = 5.5;        // Mutable float
-let name: string = "Zyra";  // Explicit type
+let name: String = "Zyra";  // Explicit type
 let color = 0xFF5733;       // Hex literal
 ```
 
