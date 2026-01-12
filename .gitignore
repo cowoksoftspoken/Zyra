@@ -15,3 +15,4 @@ benches/
 
 # Ignore dependencies
 cargo.lock
+Cargo.lock
