@@ -127,12 +127,12 @@ let color = 0xFF5733;       // Hex literal
 
 ```rust
 struct Player {
-    name: string,
+    name: String,
     score: int,
 }
 
 impl Player {
-    func new(name: string) -> Player {
+    func new(name: String) -> Player {
         Player { name, score: 0 }
     }
 
