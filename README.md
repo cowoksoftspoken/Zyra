@@ -197,17 +197,12 @@ func main() {
 
 ### Windows
 
-```powershell
-cd installer
-.\install.bat
-```
+Download `ZyraSetup-1.0.2.exe` from Release and run the installer.
 
-### Linux / macOS
+### Linux
 
 ```bash
-cd installer
-chmod +x install.sh
-./install.sh
+curl -sSL https://github.com/cowoksoftspoken/Zyra/releases/download/v1.0.2/install.sh | bash
 ```
 
 ### Build from Source
